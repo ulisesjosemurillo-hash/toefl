@@ -5,17 +5,19 @@
 
 import React, { useState, useRef } from 'react';
 import { AcademicDiscussionTask } from '../types/toefl.ts';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, ChevronRight, ChevronLeft } from 'lucide-react';
 
 interface WritingAcademicDiscussionViewProps {
   task: AcademicDiscussionTask;
   userResponse: string;
   onChangeResponse: (text: string) => void;
+  onNext?: () => void;
+  onBack?: () => void;
 }
 
 export const WritingAcademicDiscussionView: React.FC<
   WritingAcademicDiscussionViewProps
-> = ({ task, userResponse, onChangeResponse }) => {
+> = ({ task, userResponse, onChangeResponse, onNext, onBack }) => {
   const [showWordCount, setShowWordCount] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -87,7 +89,7 @@ export const WritingAcademicDiscussionView: React.FC<
   const isGoalReached = wordCount >= task.minimumWords;
 
   return (
-    <div className="flex-1 overflow-y-auto bg-white p-4 sm:p-7 flex flex-col min-h-0 select-text">
+    <div className="flex-1 overflow-y-auto bg-white p-4 sm:p-7 flex flex-col justify-between min-h-0 select-text">
       <div className="mx-auto max-w-6xl w-full grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1">
         {/* Left Column: Professor Prompt & Instructions (image_21be855e.png) */}
         <div className="flex flex-col justify-between space-y-6">
@@ -219,6 +221,36 @@ export const WritingAcademicDiscussionView: React.FC<
             />
           </div>
         </div>
+      </div>
+
+      {/* Bottom Navigation Bar */}
+      <div className="mx-auto max-w-6xl w-full border-t border-gray-200 pt-4 mt-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition shadow-2xs"
+            >
+              <ChevronLeft size={16} />
+              <span>Volver a Email</span>
+            </button>
+          )}
+          <span className="text-xs font-bold text-gray-500">
+            Task 3: Academic Discussion • {wordCount} palabras (mínimo sugerido: {task.minimumWords})
+          </span>
+        </div>
+
+        {onNext && (
+          <button
+            type="button"
+            onClick={onNext}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#0f6b64] px-6 py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-[#0c5650] transition shadow-md hover:shadow-lg transform active:scale-98"
+          >
+            <span>Finalizar y Calificar Writing &gt;</span>
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
     </div>
   );

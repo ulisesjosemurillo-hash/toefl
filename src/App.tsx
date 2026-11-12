@@ -1307,6 +1307,8 @@ export default function App() {
             task={activeWritingTest.emailTask}
             userResponse={userEmailText}
             onChangeResponse={setUserEmailText}
+            onNext={() => setWritingScreenIndex(13)}
+            onBack={() => setWritingScreenIndex(10)}
           />
         );
       }
@@ -1317,6 +1319,8 @@ export default function App() {
           task={activeWritingTest.academicDiscussionTask}
           userResponse={userDiscussionText}
           onChangeResponse={setUserDiscussionText}
+          onNext={handleSubmitWritingTest}
+          onBack={() => setWritingScreenIndex(12)}
         />
       );
     }
@@ -1431,6 +1435,11 @@ export default function App() {
               handleSubmitSpeakingTest();
             }
           }}
+          onBack={
+            speakingScreenIndex > 11
+              ? () => setSpeakingScreenIndex(speakingScreenIndex - 1)
+              : () => setSpeakingScreenIndex(8)
+          }
         />
       );
     }
@@ -1739,6 +1748,17 @@ export default function App() {
               }
             }}
             onNext={() => {
+              if (isFullExamMode && showSectionTransition) {
+                if (transitionCompletedSection === 'reading') {
+                  handleProceedToListeningInFullExam();
+                } else if (transitionCompletedSection === 'listening') {
+                  handleProceedToWritingInFullExam();
+                } else if (transitionCompletedSection === 'writing') {
+                  handleProceedToSpeakingInFullExam();
+                }
+                return;
+              }
+
               if (testMode === 'listening') {
                 if (listeningScreenIndex < listeningScreens.length - 1) {
                   setListeningScreenIndex(listeningScreenIndex + 1);

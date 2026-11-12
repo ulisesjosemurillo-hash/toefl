@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { BuildSentenceQuestion } from '../types/toefl.ts';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, ChevronRight, ChevronLeft } from 'lucide-react';
 
 interface WritingBuildSentenceViewProps {
   question: BuildSentenceQuestion;
@@ -23,6 +23,8 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
   totalQuestions,
   userSlots,
   onUpdateSlots,
+  onNext,
+  onBack,
 }) => {
   // Local state for slots
   const [placedWords, setPlacedWords] = useState<string[]>(() => {
@@ -42,7 +44,6 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
   }, [question.id, userSlots]);
 
   // Determine which words from wordBank have been used
-  // Note: multiple identical words in word bank should be handled by index
   const usedCounts: Record<string, number> = {};
   placedWords.forEach((w) => {
     if (w) usedCounts[w] = (usedCounts[w] || 0) + 1;
@@ -78,16 +79,19 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
   const prefixCount = question.speaker2.prefixSlotsCount ?? question.speaker2.totalSlots;
   const suffixCount = question.speaker2.suffixSlotsCount ?? 0;
 
+  const filledCount = placedWords.filter(Boolean).length;
+  const isComplete = filledCount === question.speaker2.totalSlots;
+
   return (
-    <div className="flex-1 overflow-y-auto bg-white p-6 sm:p-12 flex flex-col justify-between min-h-0 select-none">
+    <div className="flex-1 overflow-y-auto bg-white p-6 sm:p-10 flex flex-col justify-between min-h-0 select-none">
       <div className="mx-auto max-w-4xl w-full">
         {/* Title */}
-        <h1 className="text-center text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight mb-12">
+        <h1 className="text-center text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight mb-8">
           Make an appropriate sentence.
         </h1>
 
         {/* Conversation Dialog Area */}
-        <div className="space-y-10 max-w-3xl mx-auto">
+        <div className="space-y-8 max-w-3xl mx-auto">
           {/* Speaker 1 (Top) */}
           <div className="flex items-center gap-6">
             <div className="relative shrink-0">
@@ -194,7 +198,7 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
         </div>
 
         {/* Word Bank (bottom) */}
-        <div className="mt-16 pt-8 border-t border-gray-200 max-w-3xl mx-auto">
+        <div className="mt-12 pt-6 border-t border-gray-200 max-w-3xl mx-auto">
           <div className="flex items-center justify-between mb-4">
             <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
               Palabras disponibles (haz click para colocar en los espacios)
@@ -213,11 +217,7 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
 
           <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 py-2">
             {question.wordBank.map((word, wordIdx) => {
-              // Check how many times this word has been placed so far
-              // If wordBank has duplicate words, handle per instance
-              const totalOccurrencesInBank = question.wordBank.filter((w) => w === word).length;
               const usedTimes = usedCounts[word] || 0;
-              // How many of this word appear before this index in wordBank
               const countBefore = question.wordBank
                 .slice(0, wordIdx)
                 .filter((w) => w === word).length;
@@ -241,6 +241,44 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
             })}
           </div>
         </div>
+      </div>
+
+      {/* Bottom Navigation Bar */}
+      <div className="w-full max-w-4xl mx-auto border-t border-gray-200 pt-4 mt-8 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition shadow-2xs"
+            >
+              <ChevronLeft size={16} />
+              <span>Volver</span>
+            </button>
+          )}
+          <span className="text-xs font-bold text-gray-500">
+            Build a Sentence • Pregunta {questionIndex + 1} de {totalQuestions} ({filledCount}/{question.speaker2.totalSlots} espacios)
+          </span>
+        </div>
+
+        {onNext && (
+          <button
+            type="button"
+            onClick={onNext}
+            className={`inline-flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs sm:text-sm font-bold transition shadow-md hover:shadow-lg transform active:scale-98 ${
+              isComplete
+                ? 'bg-[#0f6b64] text-white hover:bg-[#0c5650]'
+                : 'bg-teal-700 text-white hover:bg-teal-800'
+            }`}
+          >
+            <span>
+              {questionIndex === totalQuestions - 1
+                ? 'Continuar a Write an Email &gt;'
+                : 'Siguiente Pregunta (Next) &gt;'}
+            </span>
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
     </div>
   );

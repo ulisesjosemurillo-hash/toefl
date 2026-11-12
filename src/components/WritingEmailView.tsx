@@ -5,18 +5,22 @@
 
 import React, { useState, useRef } from 'react';
 import { WriteEmailTask } from '../types/toefl.ts';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, ChevronRight, ChevronLeft } from 'lucide-react';
 
 interface WritingEmailViewProps {
   task: WriteEmailTask;
   userResponse: string;
   onChangeResponse: (text: string) => void;
+  onNext?: () => void;
+  onBack?: () => void;
 }
 
 export const WritingEmailView: React.FC<WritingEmailViewProps> = ({
   task,
   userResponse,
   onChangeResponse,
+  onNext,
+  onBack,
 }) => {
   const [showWordCount, setShowWordCount] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -88,7 +92,7 @@ export const WritingEmailView: React.FC<WritingEmailViewProps> = ({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-white p-4 sm:p-8 flex flex-col min-h-0">
+    <div className="flex-1 overflow-y-auto bg-white p-4 sm:p-8 flex flex-col justify-between min-h-0">
       <div className="mx-auto max-w-6xl w-full grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1">
         {/* Left Column: Prompt and Instructions (image_1647676f.png) */}
         <div className="rounded-2xl border-2 border-gray-300 bg-white p-6 sm:p-7 shadow-xs flex flex-col justify-between space-y-6">
@@ -192,6 +196,36 @@ export const WritingEmailView: React.FC<WritingEmailViewProps> = ({
             />
           </div>
         </div>
+      </div>
+
+      {/* Bottom Navigation Bar */}
+      <div className="mx-auto max-w-6xl w-full border-t border-gray-200 pt-4 mt-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-4 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition shadow-2xs"
+            >
+              <ChevronLeft size={16} />
+              <span>Volver a Oraciones</span>
+            </button>
+          )}
+          <span className="text-xs font-bold text-gray-500">
+            Task 2: Write an Email • {wordCount} palabras escritas
+          </span>
+        </div>
+
+        {onNext && (
+          <button
+            type="button"
+            onClick={onNext}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#0f6b64] px-6 py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-[#0c5650] transition shadow-md hover:shadow-lg transform active:scale-98"
+          >
+            <span>Continuar a Academic Discussion &gt;</span>
+            <ChevronRight size={16} />
+          </button>
+        )}
       </div>
     </div>
   );

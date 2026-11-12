@@ -12,8 +12,9 @@ import {
   Check,
   Play,
   Sparkles,
-  AlertCircle,
   ChevronRight,
+  ChevronLeft,
+  Square,
 } from 'lucide-react';
 import {
   playBeepTone,
@@ -29,6 +30,7 @@ interface SpeakingInterviewViewProps {
   volume: number;
   onFinishResponse: (transcript: string, audioBlob?: Blob, audioUrl?: string) => void;
   onNext: () => void;
+  onBack?: () => void;
 }
 
 export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
@@ -38,6 +40,7 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
   volume,
   onFinishResponse,
   onNext,
+  onBack,
 }) => {
   // Phases: 'listening' | 'countdown' | 'recording' | 'completed'
   const [phase, setPhase] = useState<'listening' | 'countdown' | 'recording' | 'completed'>('listening');
@@ -56,17 +59,25 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const audioBlobRef = useRef<Blob | null>(null);
+  const recordedTranscriptRef = useRef<string>('');
   const timerIntervalRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
+  const safetyTimerRef = useRef<any>(null);
   const speechRecognitionRef = useRef<any>(null);
   const meterCleanupRef = useRef<(() => void) | null>(null);
+  const isTransitioningRef = useRef<boolean>(false);
 
   // Spoken interview audio when screen opens
   useEffect(() => {
+    isTransitioningRef.current = false;
     setPhase('listening');
     setCountdownSeconds(3);
     setSecondsRemaining(question.responseTimeSeconds || 45);
     setRecordedTranscript('');
+    recordedTranscriptRef.current = '';
+    audioChunksRef.current = [];
+    audioBlobRef.current = null;
     setRecordedAudioUrl(null);
     setEvaluation(null);
     setIsMicActive(false);
@@ -75,51 +86,74 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     let isCancelled = false;
 
     const playQuestion = () => {
+      // 6.5s safety timer
+      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = setTimeout(() => {
+        if (!isCancelled && !isTransitioningRef.current) {
+          triggerCountdown();
+        }
+      }, 6500);
+
       if (question.audioUrl) {
-        const audio = new Audio(question.audioUrl);
-        audioRef.current = audio;
-        audio.volume = (volume || 85) / 100;
-        setIsPlayingQuestion(true);
+        try {
+          const audio = new Audio(question.audioUrl);
+          audioRef.current = audio;
+          audio.volume = Math.max(0.2, (volume || 85) / 100);
+          setIsPlayingQuestion(true);
 
-        audio.onended = () => {
-          if (!isCancelled) {
-            setIsPlayingQuestion(false);
-            startCountdownPhase();
-          }
-        };
-
-        audio.onerror = () => {
-          speakWithBrowser(question.questionSpoken, () => {
-            if (!isCancelled) {
+          audio.onended = () => {
+            if (!isCancelled && !isTransitioningRef.current) {
+              if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
               setIsPlayingQuestion(false);
-              startCountdownPhase();
+              triggerCountdown();
+            }
+          };
+
+          audio.onerror = () => {
+            speakWithBrowser(question.questionSpoken, () => {
+              if (!isCancelled && !isTransitioningRef.current) {
+                if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+                setIsPlayingQuestion(false);
+                triggerCountdown();
+              }
+            });
+          };
+
+          audio.play().catch(() => {
+            speakWithBrowser(question.questionSpoken, () => {
+              if (!isCancelled && !isTransitioningRef.current) {
+                if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+                setIsPlayingQuestion(false);
+                triggerCountdown();
+              }
+            });
+          });
+        } catch {
+          speakWithBrowser(question.questionSpoken, () => {
+            if (!isCancelled && !isTransitioningRef.current) {
+              if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+              setIsPlayingQuestion(false);
+              triggerCountdown();
             }
           });
-        };
-
-        audio.play().catch(() => {
-          speakWithBrowser(question.questionSpoken, () => {
-            if (!isCancelled) {
-              setIsPlayingQuestion(false);
-              startCountdownPhase();
-            }
-          });
-        });
+        }
       } else {
         speakWithBrowser(question.questionSpoken, () => {
-          if (!isCancelled) {
+          if (!isCancelled && !isTransitioningRef.current) {
+            if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
             setIsPlayingQuestion(false);
-            startCountdownPhase();
+            triggerCountdown();
           }
         });
       }
     };
 
-    const timer = setTimeout(playQuestion, 700);
+    const timer = setTimeout(playQuestion, 500);
 
     return () => {
       isCancelled = true;
       clearTimeout(timer);
+      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
       cleanupAllAudio();
     };
   }, [question.id]);
@@ -138,9 +172,15 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     }
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
     }
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+    if (safetyTimerRef.current) {
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
     }
     if (meterCleanupRef.current) {
       meterCleanupRef.current();
@@ -151,31 +191,53 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
 
   const speakWithBrowser = (text: string, onEnd: () => void) => {
     if (!('speechSynthesis' in window)) {
-      setTimeout(onEnd, 3500);
+      setTimeout(onEnd, 3000);
       return;
     }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.95;
-    utterance.volume = (volume || 85) / 100;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 0.95;
+      utterance.volume = (volume || 85) / 100;
 
-    const voices = window.speechSynthesis.getVoices();
-    const femaleVoice =
-      voices.find(
-        (v) =>
-          v.lang.startsWith('en') &&
-          (v.name.includes('Zira') ||
-            v.name.includes('Samantha') ||
-            v.name.includes('Female')),
-      ) || voices.find((v) => v.lang.startsWith('en'));
+      const voices = window.speechSynthesis.getVoices();
+      const femaleVoice =
+        voices.find(
+          (v) =>
+            v.lang.startsWith('en') &&
+            (v.name.includes('Zira') ||
+              v.name.includes('Samantha') ||
+              v.name.includes('Female')),
+        ) || voices.find((v) => v.lang.startsWith('en'));
 
-    if (femaleVoice) utterance.voice = femaleVoice;
+      if (femaleVoice) utterance.voice = femaleVoice;
 
-    utterance.onend = onEnd;
-    utterance.onerror = onEnd;
-    setIsPlayingQuestion(true);
-    window.speechSynthesis.speak(utterance);
+      utterance.onend = onEnd;
+      utterance.onerror = onEnd;
+      setIsPlayingQuestion(true);
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setTimeout(onEnd, 2500);
+    }
+  };
+
+  const triggerCountdown = () => {
+    if (isTransitioningRef.current) return;
+    isTransitioningRef.current = true;
+    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
+    if (audioRef.current) {
+      try {
+        audioRef.current.pause();
+      } catch {}
+    }
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
+    setIsPlayingQuestion(false);
+    startCountdownPhase();
   };
 
   // Phase 2: 3-Second Countdown before recording begins
@@ -183,10 +245,13 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     setPhase('countdown');
     setCountdownSeconds(3);
 
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+
     countdownIntervalRef.current = setInterval(() => {
       setCountdownSeconds((prev) => {
         if (prev <= 1) {
           clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null;
           playBeepTone(880, 250); // Start tone
           startRecordingPhase();
           return 0;
@@ -201,13 +266,17 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     setPhase('recording');
     setSecondsRemaining(question.responseTimeSeconds || 45);
     audioChunksRef.current = [];
+    audioBlobRef.current = null;
+    recordedTranscriptRef.current = '';
 
     await startMicrophone();
 
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
       setSecondsRemaining((prev) => {
         if (prev <= 1) {
           clearInterval(timerIntervalRef.current);
+          timerIntervalRef.current = null;
           finishRecording();
           return 0;
         }
@@ -234,30 +303,44 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
           setAudioLevel(lvl);
         });
 
-        const recorder = new MediaRecorder(stream);
+        let mimeType = '';
+        if (typeof MediaRecorder !== 'undefined') {
+          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+            mimeType = 'audio/webm;codecs=opus';
+          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+            mimeType = 'audio/webm';
+          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+            mimeType = 'audio/mp4';
+          }
+        }
+
+        const recorder = mimeType
+          ? new MediaRecorder(stream, { mimeType })
+          : new MediaRecorder(stream);
         mediaRecorderRef.current = recorder;
 
         recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
+          if (e.data && e.data.size > 0) {
             audioChunksRef.current.push(e.data);
           }
         };
 
         recorder.onstop = () => {
-          const audioBlob = new Blob(audioChunksRef.current, {
-            type: 'audio/webm; codecs=opus',
-          });
+          const blobType = mimeType || 'audio/webm';
+          const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
+          audioBlobRef.current = audioBlob;
           const url = URL.createObjectURL(audioBlob);
           setRecordedAudioUrl(url);
 
-          finalizeEvaluation(recordedTranscript, audioBlob, url);
+          const transcriptToUse = recordedTranscriptRef.current;
+          finalizeEvaluation(transcriptToUse, audioBlob, url);
         };
 
-        recorder.start();
+        recorder.start(500);
         setIsMicActive(true);
       }
     } catch (err) {
-      console.warn('Microphone permission error or fallback:', err);
+      console.warn('Microphone permission or hardware error:', err);
       setIsMicActive(true);
     }
 
@@ -277,7 +360,9 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
           for (let i = 0; i < event.results.length; i++) {
             str += event.results[i][0].transcript + ' ';
           }
-          setRecordedTranscript(str.trim());
+          const cleaned = str.trim();
+          recordedTranscriptRef.current = cleaned;
+          setRecordedTranscript(cleaned);
         };
 
         rec.onerror = () => {};
@@ -310,14 +395,21 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
   };
 
   const finishRecording = () => {
-    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
     stopMicrophone();
 
     setTimeout(() => {
       if (!evaluation) {
-        finalizeEvaluation(recordedTranscript);
+        finalizeEvaluation(
+          recordedTranscriptRef.current,
+          audioBlobRef.current || undefined,
+          recordedAudioUrl || undefined,
+        );
       }
-    }, 200);
+    }, 250);
   };
 
   const finalizeEvaluation = (
@@ -325,11 +417,13 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     audioBlob?: Blob,
     audioUrl?: string,
   ) => {
-    const textToEvaluate = transcript.trim();
+    const textToEvaluate = (transcript || '').trim();
+    const hasAudio = !!audioBlob && audioBlob.size > 1000;
     const evalResult = evaluateInterviewSpoken(
       textToEvaluate,
       question.sampleModelAnswer,
       question.responseTimeSeconds || 45,
+      hasAudio,
     );
     setEvaluation(evalResult);
     setPhase('completed');
@@ -348,6 +442,16 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     audio.onended = () => setIsPlayingRecorded(false);
     audio.onerror = () => setIsPlayingRecorded(false);
     audio.play().catch(() => setIsPlayingRecorded(false));
+  };
+
+  const handleDirectNext = () => {
+    cleanupAllAudio();
+    onNext();
+  };
+
+  const handleDirectBack = () => {
+    cleanupAllAudio();
+    if (onBack) onBack();
   };
 
   const formatTimer = (sec: number) => {
@@ -383,22 +487,36 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
 
           {/* 3-Second Automatic Countdown Overlay */}
           {phase === 'countdown' && (
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-2xs flex flex-col items-center justify-center text-white p-4">
+            <div className="absolute inset-0 bg-black/55 backdrop-blur-2xs flex flex-col items-center justify-center text-white p-4">
               <div className="flex h-24 w-24 items-center justify-center rounded-full border-4 border-amber-400 bg-amber-500/90 shadow-2xl animate-bounce">
                 <span className="text-5xl font-black">{countdownSeconds}</span>
               </div>
               <p className="mt-4 text-base font-extrabold tracking-wide uppercase text-amber-200">
                 Prepárate para responder...
               </p>
-              <p className="text-xs text-white/80 mt-1">
+              <p className="text-xs text-white/90 mt-1">
                 El micrófono se encenderá automáticamente en {countdownSeconds}s
               </p>
             </div>
           )}
         </div>
 
+        {/* Manual quick trigger if user wants to speak immediately without waiting */}
+        {phase === 'listening' && (
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={triggerCountdown}
+              className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-1.5 text-xs font-bold text-white hover:bg-teal-800 shadow-xs transition"
+            >
+              <Mic size={14} />
+              <span>🎙️ Responder Ahora (Saltar Audio)</span>
+            </button>
+          </div>
+        )}
+
         {/* RESPONSE TIME Box with 45-second timer matching image_36efe0fd.png */}
-        <div className="mt-6 w-80 rounded-2xl overflow-hidden border-2 border-teal-700 shadow-lg bg-white">
+        <div className="mt-5 w-80 rounded-2xl overflow-hidden border-2 border-teal-700 shadow-lg bg-white">
           <div className="bg-[#0f6b64] text-white text-center py-2 text-xs font-black tracking-wider uppercase flex items-center justify-center gap-2">
             <span>RESPONSE TIME</span>
             {phase === 'recording' && (
@@ -436,10 +554,10 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
                   <span>Volumen de tu voz</span>
                   <span>{audioLevel}%</span>
                 </div>
-                <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-2.5 w-full bg-gray-200 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-emerald-500 transition-all duration-75 rounded-full"
-                    style={{ width: `${Math.max(6, audioLevel)}%` }}
+                    style={{ width: `${Math.max(8, audioLevel)}%` }}
                   />
                 </div>
               </div>
@@ -453,8 +571,9 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
           )}
 
           {phase === 'recording' && (
-            <div className="bg-rose-50 px-3 py-1.5 text-center border-t border-rose-200 text-xs font-bold text-rose-800 animate-pulse">
-              ● GRABANDO EN VIVO (45s)... ¡Habla con volumen firme!
+            <div className="bg-rose-50 px-3 py-2 text-center border-t border-rose-200 text-xs font-bold text-rose-800 flex items-center justify-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-rose-600 animate-ping" />
+              <span>GRABANDO EN VIVO (45s)... ¡Habla con volumen firme!</span>
             </div>
           )}
 
@@ -468,7 +587,7 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
 
         {/* Phase 4: Instant Evaluation Card (¿Está bien o está mal?) */}
         {phase === 'completed' && evaluation && (
-          <div className="mt-6 w-full max-w-2xl rounded-2xl border-2 border-gray-200 bg-white p-5 shadow-lg space-y-4">
+          <div className="mt-5 w-full max-w-2xl rounded-2xl border-2 border-gray-200 bg-white p-5 shadow-lg space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
               <div className="flex items-center gap-2">
                 <span
@@ -509,9 +628,13 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
                 <div className="p-3 rounded-xl bg-teal-50/50 border border-teal-100 text-teal-950 font-medium text-xs leading-relaxed">
                   {recordedTranscript ? (
                     `"${recordedTranscript}"`
+                  ) : recordedAudioUrl ? (
+                    <span className="text-teal-900 font-medium">
+                      🎙️ Tu respuesta oral de 45 segundos fue capturada en el archivo de audio con éxito.
+                    </span>
                   ) : (
                     <span className="text-amber-800 italic">
-                      Audio registrado sin transcripción clara de palabras.
+                      Audio registrado sin transcripción textual detectada.
                     </span>
                   )}
                 </div>
@@ -554,34 +677,59 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
 
       {/* Bottom controls */}
       <div className="w-full max-w-4xl border-t border-gray-200 pt-4 mt-6 flex items-center justify-between">
-        <span className="text-xs font-bold text-gray-500">
-          Take an Interview • Pregunta {questionIndex + 1} de {totalInterviewQuestions} (45s)
-        </span>
-
-        {phase === 'completed' ? (
-          <button
-            onClick={onNext}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#0f6b64] px-6 py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-[#0c5650] transition shadow-md hover:shadow-lg transform active:scale-98"
-          >
-            <span>
-              {isLastQuestion
-                ? 'Finalizar y Calificar Speaking Oficial &gt;'
-                : 'Siguiente Pregunta (45s) &gt;'}
-            </span>
-            <ChevronRight size={16} />
-          </button>
-        ) : phase === 'recording' ? (
-          <button
-            onClick={finishRecording}
-            className="rounded-lg bg-teal-800 text-white px-4 py-1.5 text-xs font-bold hover:bg-teal-700 transition shadow-xs"
-          >
-            Terminar y Calificar Respuesta
-          </button>
-        ) : (
-          <span className="text-xs text-gray-400 italic">
-            {phase === 'listening' ? 'Escuchando a la investigadora...' : 'Preparando grabación...'}
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              onClick={handleDirectBack}
+              className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 transition shadow-2xs"
+            >
+              <ChevronLeft size={16} />
+              <span>Volver</span>
+            </button>
+          )}
+          <span className="text-xs font-bold text-gray-500">
+            Take an Interview • Pregunta {questionIndex + 1} de {totalInterviewQuestions} (45s)
           </span>
-        )}
+        </div>
+
+        <div className="flex items-center gap-3">
+          {phase === 'recording' && (
+            <button
+              onClick={finishRecording}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 text-white px-4 py-2 text-xs font-bold hover:bg-rose-700 transition shadow-xs animate-pulse"
+            >
+              <Square size={13} className="fill-white" />
+              <span>Finalizar Grabación</span>
+            </button>
+          )}
+
+          {phase === 'completed' ? (
+            <button
+              onClick={handleDirectNext}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#0f6b64] px-6 py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-[#0c5650] transition shadow-md hover:shadow-lg transform active:scale-98"
+            >
+              <span>
+                {isLastQuestion
+                  ? 'Finalizar y Calificar Speaking Oficial &gt;'
+                  : 'Siguiente Pregunta (45s) &gt;'}
+              </span>
+              <ChevronRight size={16} />
+            </button>
+          ) : (
+            <button
+              onClick={handleDirectNext}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-teal-600 bg-teal-50 px-4 py-2 text-xs font-bold text-teal-800 hover:bg-teal-100 transition shadow-2xs"
+              title="Avanzar a la siguiente pregunta"
+            >
+              <span>
+                {isLastQuestion
+                  ? 'Finalizar Speaking &gt;'
+                  : 'Siguiente Pregunta (Next)'}
+              </span>
+              <ChevronRight size={15} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
