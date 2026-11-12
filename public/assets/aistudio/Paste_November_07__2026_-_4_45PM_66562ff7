@@ -1,0 +1,465 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TOEFL iBT - Reading Section</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Open Sans', sans-serif;
+            background-color: #bbbbbb; /* Match the gray background of the screenshots outside the content area */
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        /* Top Navigation Bar */
+        .top-nav {
+            background-color: #0f6b64; /* TOEFL Teal */
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 16px;
+            font-size: 14px;
+        }
+        .sub-nav {
+            background-color: white;
+            border-bottom: 1px solid #ccc;
+            padding: 4px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #333;
+            display: flex;
+            align-items: center;
+        }
+        .main-container {
+            background-color: white;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        
+        /* Custom styles for Complete the Words */
+        .grey-input-block {
+            display: inline-flex;
+            align-items: center;
+            background-color: #d1d5db;
+            border-radius: 2px;
+            padding: 2px 4px;
+            margin-left: 1px;
+            margin-right: 4px;
+            vertical-align: text-bottom;
+        }
+        .letter-slot {
+            width: 18px;
+            height: 24px;
+            background-color: transparent;
+            border: none;
+            border-bottom: 2px solid #4b5563;
+            margin: 0 2px;
+            text-align: center;
+            font-weight: 700;
+            color: #111827;
+            text-transform: uppercase;
+            font-size: 1rem;
+            padding: 0;
+            outline: none;
+        }
+        .letter-slot:focus {
+            border-bottom: 2px solid #0f6b64;
+            background-color: #e5e7eb;
+        }
+
+        /* Split screen for reading */
+        .split-layout {
+            display: flex;
+            flex-direction: row;
+            height: 100%;
+        }
+        .left-pane {
+            flex: 1;
+            padding: 40px;
+            border-right: 1px solid #ddd;
+            overflow-y: auto;
+        }
+        .right-pane {
+            flex: 1;
+            padding: 40px;
+            overflow-y: auto;
+            background-color: #fafafa;
+        }
+
+        /* Notice Box Style */
+        .notice-box {
+            border: 2px solid #ccc;
+            padding: 20px;
+            text-align: center;
+            max-width: 400px;
+            margin: 0 auto;
+        }
+
+        /* Radio Buttons */
+        .custom-radio-label {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .custom-radio-label input[type="radio"] {
+            appearance: none;
+            background-color: #fff;
+            margin: 0;
+            font-inherit;
+            color: currentColor;
+            width: 20px;
+            height: 20px;
+            border: 1px solid #555;
+            border-radius: 50%;
+            display: grid;
+            place-content: center;
+            margin-right: 12px;
+            margin-top: 2px;
+            flex-shrink: 0;
+        }
+        .custom-radio-label input[type="radio"]::before {
+            content: "";
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            background-color: #0f6b64;
+        }
+        .custom-radio-label input[type="radio"]:checked::before {
+            transform: scale(1);
+        }
+        .custom-radio-label input[type="radio"]:checked {
+            border-color: #0f6b64;
+        }
+
+        /* Buttons */
+        .nav-btn {
+            background-color: white;
+            color: #0f6b64;
+            border: none;
+            padding: 4px 16px;
+            font-weight: 600;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .nav-btn:hover { background-color: #e0f2f1; }
+        .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+    <!-- Header Area -->
+    <div class="top-nav">
+        <div class="flex items-center gap-2">
+            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/ETS_logo.svg/512px-ETS_logo.svg.png" alt="Logo" style="height: 16px; filter: brightness(0) invert(1);">
+        </div>
+        <div class="flex items-center gap-3">
+            <button class="nav-btn" style="background-color: #0d5c56; color: white;">Volume 🔊</button>
+            <button id="btn-back" class="nav-btn" onclick="goBack()">&lt; Back</button>
+            <button id="btn-next" class="nav-btn" onclick="goNext()">Next &gt;</button>
+        </div>
+    </div>
+    <div class="sub-nav">
+        <span class="mr-2 border-r border-gray-400 pr-2">Reading</span>
+        <span id="question-indicator" class="font-normal text-gray-500">Introduction</span>
+    </div>
+
+    <!-- Main Content Area -->
+    <div id="app-content" class="main-container">
+        <!-- Rendered via JS -->
+    </div>
+
+    <script>
+        // Data Structure representing the exact flow from the screenshots
+        const screens = [
+            {
+                id: 'intro',
+                type: 'intro',
+                indicator: 'Reading Section Intro',
+                render: () => `
+                    <div style="padding: 60px; max-width: 800px; margin: 0 auto;">
+                        <h1 class="text-2xl font-bold text-gray-600 border-b border-gray-300 pb-2 mb-6">Reading Section</h1>
+                        <p class="text-sm text-gray-800 mb-6 leading-relaxed">
+                            In an actual test, you will answer 35-48 reading questions to demonstrate how well you understand academic and non-academic texts in English. In this sampler, you will complete only one task per task type. There are three types of tasks in the reading section of the test.
+                        </p>
+                        <table class="w-full text-sm border border-black mb-8">
+                            <thead>
+                                <tr class="bg-[#33d6b0]">
+                                    <th class="border border-black p-2 text-left w-1/3">Type of Task</th>
+                                    <th class="border border-black p-2 text-left">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="border border-black p-2">Complete the Words</td>
+                                    <td class="border border-black p-2">Fill in the missing letters in a paragraph.</td>
+                                </tr>
+                                <tr>
+                                    <td class="border border-black p-2">Read in Daily Life</td>
+                                    <td class="border border-black p-2">Answer questions about everyday reading material.</td>
+                                </tr>
+                                <tr>
+                                    <td class="border border-black p-2">Read an Academic Passage</td>
+                                    <td class="border border-black p-2">Answer questions about academic passages.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `
+            },
+            {
+                id: 'complete_words',
+                type: 'complete_words',
+                indicator: 'Questions 1-10 of 17', // Match screenshot
+                render: () => `
+                    <div style="padding: 40px 80px;">
+                        <h2 class="text-center font-bold text-lg mb-16 mt-8">Fill in the missing letters in the paragraph.</h2>
+                        <div class="text-sm leading-loose text-gray-800" style="max-width: 900px; margin: 0 auto;">
+                            We know from drawings that have been preserved in caves for over 10,000 years that early humans performed dances as a group activity. We mi<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-1-0" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-1-1" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-1-2" oninput="moveNext(this)"></span> think that prehistoric peo<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-2-0" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-2-1" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-2-2" oninput="moveNext(this)"></span> concentrated on ba<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-3-0" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-3-1" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-3-2" oninput="moveNext(this)"></span> survival. Howev<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-4-0" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-4-1" oninput="moveNext(this)"></span>, it is clear fro<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-5-0" oninput="moveNext(this)"></span> the reco<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-6-0" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-6-1" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-6-2" oninput="moveNext(this)"></span> that danc<span class="grey-input-block"><input type="text" maxlength="1" class="letter-slot" id="cw-7-0" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-7-1" oninput="moveNext(this)"><input type="text" maxlength="1" class="letter-slot" id="cw-7-2" oninput="moveNext(this)"></span> was important to them. They recorded more drawings of dances than any other group activity. Dances served various purposes, including ritualistic communication with the divine, storytelling, and social cohesion.
+                        </div>
+                    </div>
+                `
+            },
+            {
+                id: 'notice_q1',
+                type: 'mcq',
+                indicator: 'Question 11 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-12">Read a notice.</h2>
+                    <div class="notice-box">
+                        <div class="font-bold text-lg mb-2">Municipal Charter</div>
+                        <div class="font-bold text-sm mb-4">Sign up for paperless billing statements today.</div>
+                        <div class="text-xs text-left">Safe, convenient, easy. Enroll in paperless billing to receive monthly savings account statements in an electronic PDF document. Access your Municipal Charter account through the mobile app and select account preferences in the upper right-hand corner to enroll.</div>
+                    </div>
+                `,
+                question: 'What type of business issued the notice?',
+                options: ['An Internet provider', 'A computer company', 'A paper company', 'A bank']
+            },
+            {
+                id: 'notice_q2',
+                type: 'mcq',
+                indicator: 'Question 12 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-12">Read a notice.</h2>
+                    <div class="notice-box">
+                        <div class="font-bold text-lg mb-2">Municipal Charter</div>
+                        <div class="font-bold text-sm mb-4">Sign up for paperless billing statements today.</div>
+                        <div class="text-xs text-left">Safe, convenient, easy. Enroll in paperless billing to receive monthly savings account statements in an electronic PDF document. Access your Municipal Charter account through the mobile app and select account preferences in the upper right-hand corner to enroll.</div>
+                    </div>
+                `,
+                question: 'How can customers enroll in paperless billing?',
+                options: [
+                    'By visiting a Municipal Charter office',
+                    'By accessing the Municipal Charter website',
+                    'By using the Municipal Charter app',
+                    'By calling a Municipal Charter customer service representative'
+                ]
+            },
+            {
+                id: 'acad_q1',
+                type: 'mcq',
+                indicator: 'Question 13 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-8">The Mirror Test</h2>
+                    <div class="text-sm leading-relaxed text-gray-800 space-y-4 pr-4">
+                        <p>Very young children cannot recognize themselves in a mirror; they usually achieve this milestone around 18 months of age. The ability to recognize oneself in the mirror is considered to be a key component of self-awareness and consciousness for humans. But what about animals?</p>
+                        <p>For many years, scientists have known that members of the great ape family could recognize themselves in mirrors. They measured this by the "mirror test," which involved putting a colored mark on an ape's body, and then showing the ape its reflection in a mirror. If the ape tried to remove the mark on its own body, the scientists knew that the ape was recognizing its reflection.</p>
+                        <p>Apes are close relatives of humans, but in recent years, scientists have discovered that other animals also pass the "mirror test." Elephants and dolphins have shown signs of self-recognition. These, like apes, are highly intelligent animals. But in a more recent experiment, a type of fish called the cleaner fish tried to scrape a mark off its body when it saw itself in the mirror. This suggests that even less intelligent animals may possess more self-awareness than previously suspected.</p>
+                    </div>
+                `,
+                question: 'What is the passage mainly about?',
+                options: [
+                    'Stages of early childhood development',
+                    'Research on animal cognition',
+                    'Differences between apes, elephants, and dolphins',
+                    'Recent experiments on fish'
+                ]
+            },
+            {
+                id: 'acad_q2',
+                type: 'mcq',
+                indicator: 'Question 14 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-8">The Mirror Test</h2>
+                    <div class="text-sm leading-relaxed text-gray-800 space-y-4 pr-4">
+                        <p>Very young children cannot recognize themselves in a mirror; they usually achieve this <strong>milestone</strong> around 18 months of age. The ability to recognize oneself in the mirror is considered to be a key component of self-awareness and consciousness for humans. But what about animals?</p>
+                        <p>For many years, scientists have known that members of the great ape family could recognize themselves in mirrors. They measured this by the "mirror test," which involved putting a colored mark on an ape's body, and then showing the ape its reflection in a mirror. If the ape tried to remove the mark on its own body, the scientists knew that the ape was recognizing its reflection.</p>
+                        <p>Apes are close relatives of humans, but in recent years, scientists have discovered that other animals also pass the "mirror test." Elephants and dolphins have shown signs of self-recognition. These, like apes, are highly intelligent animals. But in a more recent experiment, a type of fish called the cleaner fish tried to scrape a mark off its body when it saw itself in the mirror. This suggests that even less intelligent animals may possess more self-awareness than previously suspected.</p>
+                    </div>
+                `,
+                question: 'The word "milestone" in the first sentence is closest in meaning to',
+                options: ['accomplishment', 'distance', 'weight', 'discovery']
+            },
+            {
+                id: 'acad_q3',
+                type: 'mcq',
+                indicator: 'Question 15 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-8">The Mirror Test</h2>
+                    <div class="text-sm leading-relaxed text-gray-800 space-y-4 pr-4">
+                        <p>Very young children cannot recognize themselves in a mirror; they usually achieve this milestone around 18 months of age. The ability to recognize oneself in the mirror is considered to be a key component of self-awareness and consciousness for humans. But what about animals?</p>
+                        <p>For many years, scientists have known that members of the great ape family could recognize themselves in mirrors. They measured this by the "mirror test," which involved putting a colored mark on an ape's body, and then showing the ape its reflection in a mirror. If the ape tried to remove the mark on its own body, the scientists knew that the ape was recognizing its reflection.</p>
+                        <p>Apes are close relatives of humans, but in recent years, scientists have discovered that other animals also pass the "mirror test." Elephants and dolphins have shown signs of self-recognition. These, like apes, are highly intelligent animals. But in a more recent experiment, a type of fish called the cleaner fish tried to scrape a mark off its body when it saw itself in the mirror. This suggests that even less intelligent animals may possess more self-awareness than previously suspected.</p>
+                    </div>
+                `,
+                question: "Why did scientists put colored marks on animals' bodies?",
+                options: [
+                    "It made it possible to track the animals' movements.",
+                    "It helped them determine whether the animals recognized themselves.",
+                    "It made it easier to tell the animals apart.",
+                    "It showed whether some animals can detect color differences."
+                ]
+            },
+            {
+                id: 'acad_q4',
+                type: 'mcq',
+                indicator: 'Question 16 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-8">The Mirror Test</h2>
+                    <div class="text-sm leading-relaxed text-gray-800 space-y-4 pr-4">
+                        <p>Very young children cannot recognize themselves in a mirror; they usually achieve this milestone around 18 months of age. The ability to recognize oneself in the mirror is considered to be a key component of self-awareness and consciousness for humans. But what about animals?</p>
+                        <p>For many years, scientists have known that members of the great ape family could recognize themselves in mirrors. They measured this by the "mirror test," which involved putting a colored mark on an ape's body, and then showing the ape its reflection in a mirror. If the ape tried to remove the mark on its own body, the scientists knew that the ape was recognizing its reflection.</p>
+                        <p>Apes are close relatives of humans, but in recent years, scientists have discovered that other animals also pass the "mirror test." Elephants and dolphins have shown signs of self-recognition. These, like apes, are highly intelligent animals. But in a more recent experiment, a type of fish called the cleaner fish tried to scrape a mark off its body when it saw itself in the mirror. This suggests that even less intelligent animals may possess more self-awareness than previously suspected.</p>
+                    </div>
+                `,
+                question: 'According to the passage, all of the following are true about elephants EXCEPT:',
+                options: [
+                    'They can recognize themselves in mirrors.',
+                    'They are highly intelligent animals.',
+                    'They possess qualities in common with apes.',
+                    'They understand certain signs from other animals.'
+                ]
+            },
+            {
+                id: 'acad_q5',
+                type: 'mcq',
+                indicator: 'Question 17 of 17',
+                passageHtml: `
+                    <h2 class="text-center font-bold text-xl mb-8">The Mirror Test</h2>
+                    <div class="text-sm leading-relaxed text-gray-800 space-y-4 pr-4">
+                        <p>Very young children cannot recognize themselves in a mirror; they usually achieve this milestone around 18 months of age. The ability to recognize oneself in the mirror is considered to be a key component of self-awareness and consciousness for humans. But what about animals?</p>
+                        <p>For many years, scientists have known that members of the great ape family could recognize themselves in mirrors. They measured this by the "mirror test," which involved putting a colored mark on an ape's body, and then showing the ape its reflection in a mirror. If the ape tried to remove the mark on its own body, the scientists knew that the ape was recognizing its reflection.</p>
+                        <p>Apes are close relatives of humans, but in recent years, scientists have discovered that other animals also pass the "mirror test." Elephants and dolphins have shown signs of self-recognition. These, like apes, are highly intelligent animals. But in a more recent experiment, a type of fish called the cleaner fish tried to scrape a mark off its body when it saw itself in the mirror. This suggests that even less intelligent animals may possess more self-awareness than previously suspected.</p>
+                    </div>
+                `,
+                question: 'Why does the author mention cleaner fish?',
+                options: [
+                    'To suggest that a wide range of animals may possess self-awareness',
+                    'To imply that ocean animals are highly intelligent',
+                    'To demonstrate a flaw in a recent experiment',
+                    'To provide an example of an animal that does not recognize itself'
+                ]
+            }
+        ];
+
+        let currentIndex = 0;
+        let userAnswers = {}; // To store user answers for MCQ and CW
+
+        function renderScreen() {
+            const screen = screens[currentIndex];
+            const contentDiv = document.getElementById('app-content');
+            document.getElementById('question-indicator').innerText = screen.indicator;
+            
+            // Buttons state
+            document.getElementById('btn-back').style.visibility = currentIndex === 0 ? 'hidden' : 'visible';
+            document.getElementById('btn-next').innerText = currentIndex === screens.length - 1 ? 'Finish' : 'Next >';
+
+            if (screen.type === 'intro' || screen.type === 'complete_words') {
+                contentDiv.innerHTML = screen.render();
+                
+                // Restore Complete Words answers if navigating back
+                if (screen.type === 'complete_words' && userAnswers['cw']) {
+                    Object.keys(userAnswers['cw']).forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.value = userAnswers['cw'][id];
+                    });
+                }
+            } else if (screen.type === 'mcq') {
+                let optionsHtml = '';
+                screen.options.forEach((opt, idx) => {
+                    const isChecked = userAnswers[screen.id] === idx ? 'checked' : '';
+                    optionsHtml += `
+                        <label class="custom-radio-label">
+                            <input type="radio" name="mcq_${screen.id}" value="${idx}" onchange="saveAnswer('${screen.id}', ${idx})" ${isChecked}>
+                            <span>${opt}</span>
+                        </label>
+                    `;
+                });
+
+                contentDiv.innerHTML = `
+                    <div class="split-layout">
+                        <div class="left-pane">
+                            ${screen.passageHtml}
+                        </div>
+                        <div class="right-pane">
+                            <div style="max-width: 500px;">
+                                <h3 class="font-bold text-sm mb-6">${screen.question}</h3>
+                                <div>
+                                    ${optionsHtml}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        // Logic for Complete the Words text inputs
+        function moveNext(input) {
+            input.value = input.value.toUpperCase();
+            
+            // Save state
+            if (!userAnswers['cw']) userAnswers['cw'] = {};
+            userAnswers['cw'][input.id] = input.value;
+
+            if (input.value && input.nextElementSibling && input.nextElementSibling.tagName === 'INPUT') {
+                input.nextElementSibling.focus();
+            }
+        }
+
+        // Save MCQ answers
+        function saveAnswer(questionId, answerIdx) {
+            userAnswers[questionId] = answerIdx;
+        }
+
+        function goNext() {
+            if (currentIndex < screens.length - 1) {
+                currentIndex++;
+                renderScreen();
+            } else {
+                alert("Simulación completada. En el examen real, tus respuestas se enviarían para ser evaluadas.");
+            }
+        }
+
+        function goBack() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                renderScreen();
+            }
+        }
+
+        // Initialize App
+        window.onload = () => {
+            renderScreen();
+        };
+    </script>
+</body>
+</html>
+```

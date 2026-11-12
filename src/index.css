@@ -1,0 +1,197 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Open Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #bbbbbb;
+    color: #1f2937;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+  }
+}
+
+/* Authentic TOEFL iBT Styles */
+.toefl-top-nav {
+  background-color: #0f6b64;
+  color: white;
+}
+
+.toefl-btn {
+  background-color: white;
+  color: #0f6b64;
+  border: none;
+  padding: 4px 16px;
+  font-weight: 600;
+  border-radius: 9999px;
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease-in-out;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.toefl-btn:hover {
+  background-color: #e6f4f2;
+}
+
+.toefl-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background-color: #f3f4f6;
+  color: #9ca3af;
+}
+
+.toefl-btn-dark {
+  background-color: #0c5650;
+  color: #ffffff;
+}
+
+.toefl-btn-dark:hover {
+  background-color: #09433e;
+}
+
+/* Complete the Words Input Block */
+.grey-input-block {
+  display: inline-flex;
+  align-items: center;
+  background-color: #d1d5db;
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-left: 2px;
+  margin-right: 4px;
+  vertical-align: text-bottom;
+}
+
+.letter-slot {
+  width: 18px;
+  height: 24px;
+  background-color: transparent;
+  border: none;
+  border-bottom: 2px solid #4b5563;
+  margin: 0 2px;
+  text-align: center;
+  font-weight: 700;
+  color: #111827;
+  text-transform: uppercase;
+  font-size: 1rem;
+  padding: 0;
+  outline: none;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.letter-slot:focus {
+  border-bottom: 2px solid #0f6b64;
+  background-color: #e5e7eb;
+}
+
+/* Split screen layout */
+.split-layout {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.left-pane {
+  flex: 1;
+  padding: 36px 40px;
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+  background-color: #ffffff;
+  min-height: 0;
+}
+
+.right-pane {
+  flex: 1;
+  padding: 36px 40px;
+  overflow-y: auto;
+  background-color: #fafafa;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .split-layout {
+    flex-direction: column;
+    height: 100%;
+    overflow-y: auto;
+  }
+  .left-pane {
+    border-right: none;
+    border-bottom: 2px solid #e5e7eb;
+    padding: 20px;
+    flex: none;
+    max-height: 42vh;
+  }
+  .right-pane {
+    padding: 20px;
+    flex: 1;
+  }
+}
+
+/* Notice Box Style */
+.notice-box {
+  border: 2px solid #cbd5e1;
+  background-color: #ffffff;
+  padding: 24px;
+  text-align: center;
+  max-width: 480px;
+  margin: 0 auto;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04);
+}
+
+/* Authentic TOEFL Radio Buttons */
+.custom-radio-label {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 18px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1f2937;
+  padding: 8px 12px;
+  border-radius: 6px;
+  transition: background-color 0.15s;
+}
+
+.custom-radio-label:hover {
+  background-color: #f3f4f6;
+}
+
+.custom-radio-label input[type="radio"] {
+  appearance: none;
+  background-color: #fff;
+  margin: 0;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid #4b5563;
+  border-radius: 50%;
+  display: grid;
+  place-content: center;
+  margin-right: 12px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+
+.custom-radio-label input[type="radio"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: scale(0);
+  transition: 120ms transform ease-in-out;
+  background-color: #0f6b64;
+}
+
+.custom-radio-label input[type="radio"]:checked::before {
+  transform: scale(1);
+}
+
+.custom-radio-label input[type="radio"]:checked {
+  border-color: #0f6b64;
+}
