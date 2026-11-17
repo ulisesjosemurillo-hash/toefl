@@ -51,6 +51,7 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const testAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-request or test on modal open
   useEffect(() => {
@@ -72,6 +73,13 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+    }
+    if (recordingTimeoutRef.current) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop();
     }
     if (testAudioElementRef.current) {
       testAudioElementRef.current.pause();
@@ -131,13 +139,19 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
     handleRequestPermission(newDeviceId);
   };
 
-  // Quick 3-second test recording
+  // Manual microphone test recording. The user controls when to stop.
   const handleStartTestRecording = () => {
-    if (!streamRef.current || typeof MediaRecorder === 'undefined') return;
+    if (!streamRef.current || typeof MediaRecorder === 'undefined') {
+      setErrorMessage('No hay un micrófono disponible para iniciar la grabación.');
+      return;
+    }
     playBeepTone(880, 200);
     audioChunksRef.current = [];
-    setTestAudioUrl(null);
-    setIsTestRecording(true);
+    setTestAudioUrl((previousUrl) => {
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      return null;
+    });
+    setErrorMessage(null);
 
     try {
       const mimeType = getSupportedAudioMimeType();
@@ -150,26 +164,47 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
         if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
+      recorder.onerror = () => {
+        setIsTestRecording(false);
+        setErrorMessage('Ocurrió un error durante la grabación de prueba. Inténtalo de nuevo.');
+      };
+
       recorder.onstop = () => {
+        if (recordingTimeoutRef.current) {
+          clearTimeout(recordingTimeoutRef.current);
+          recordingTimeoutRef.current = null;
+        }
         const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
-        const url = URL.createObjectURL(blob);
-        setTestAudioUrl(url);
+        if (blob.size === 0) {
+          setErrorMessage('La grabación está vacía. Comprueba el micrófono y vuelve a intentarlo.');
+        } else {
+          const url = URL.createObjectURL(blob);
+          setTestAudioUrl(url);
+        }
         setIsTestRecording(false);
       };
 
       recorder.start(250);
-
-      // Automatically record for 3 seconds then stop
-      setTimeout(() => {
-        if (recorder.state === 'recording') {
-          recorder.stop();
-        }
-      }, 3000);
+      setIsTestRecording(true);
+      // Safety limit: stop automatically after 30 seconds if the user forgets.
+      recordingTimeoutRef.current = setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop();
+      }, 30000);
     } catch (e: any) {
       setIsTestRecording(false);
       setErrorMessage(
         'Error al grabar audio de prueba: ' + (e.message || String(e)),
       );
+    }
+  };
+
+  const handleStopTestRecording = () => {
+    if (recordingTimeoutRef.current) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+    if (mediaRecorderRef.current?.state === 'recording') {
+      mediaRecorderRef.current.stop();
     }
   };
 
@@ -275,23 +310,22 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
                 </p>
               </div>
 
-              {/* Quick 3-second recording test */}
+              {/* Manual microphone recording test */}
               <div className="pt-2 border-t border-emerald-200/60 flex flex-wrap items-center justify-between gap-2">
                 <button
                   type="button"
-                  onClick={handleStartTestRecording}
-                  disabled={isTestRecording}
+                  onClick={isTestRecording ? handleStopTestRecording : handleStartTestRecording}
                   className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition shadow-xs ${
                     isTestRecording
                       ? 'bg-rose-600 text-white animate-pulse'
                       : 'bg-white border border-emerald-300 text-emerald-900 hover:bg-emerald-100'
                   }`}
                 >
-                  <Mic size={14} />
+                  {isTestRecording ? <Square size={14} /> : <Mic size={14} />}
                   <span>
                     {isTestRecording
-                      ? 'Grabando 3s... ¡Habla ahora!'
-                      : 'Grabar prueba de 3s'}
+                      ? 'Detener grabación'
+                      : 'Iniciar grabación de prueba'}
                   </span>
                 </button>
 
@@ -335,14 +369,14 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
             </div>
           )}
 
-          {/* 3-second automatic countdown explanation */}
+          {/* Microphone test instructions */}
           <div className="rounded-xl border border-teal-100 bg-teal-50/50 p-3.5 text-xs text-teal-950 flex items-start gap-2.5">
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#0f6b64] text-[10px] font-black text-white">
               ⏱
             </span>
             <div className="space-y-0.5">
               <p className="font-bold">
-                Cuenta regresiva de 3 segundos antes de grabar:
+                Grabación de prueba controlada por ti:
               </p>
               <p className="text-gray-600 leading-relaxed text-[11px]">
                 En cada pregunta, el audio del narrador o entrevistador hablará
