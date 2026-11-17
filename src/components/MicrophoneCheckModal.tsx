@@ -379,10 +379,10 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
                 Grabación de prueba controlada por ti:
               </p>
               <p className="text-gray-600 leading-relaxed text-[11px]">
-                En cada pregunta, el audio del narrador o entrevistador hablará
-                primero. Al terminar, verás un conteo de preparación de{' '}
-                <strong>3, 2, 1...</strong> y sonará un tono para que el
-                micrófono se encienda automáticamente y comiences a grabar.
+                Pulsa “Iniciar grabación de prueba”, habla con normalidad y pulsa
+                “Detener grabación” cuando termines. Puedes grabar hasta 30
+                segundos; después podrás escucharla para comprobar que tu voz se
+                registra correctamente.
               </p>
             </div>
           </div>
