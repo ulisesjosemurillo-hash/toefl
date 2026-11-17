@@ -152,8 +152,9 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
   };
 
   const handleClearAll = () => {
-    if (confirm('¿Estás seguro de que deseas reiniciar todo el historial de práctica?')) {
+    if (confirm('¿Deseas borrar todos los resultados anteriores y descartar cualquier examen guardado sin terminar? Esta acción no se puede deshacer.')) {
       clearAllAttempts();
+      onDiscardSavedSession?.();
       onRefreshData();
     }
   };
@@ -952,7 +953,7 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
                 {attempts.length > 0 && (
                   <button
                     onClick={handleClearAll}
-                    title="Borrar todo el historial"
+                    title="Borrar el historial y reiniciar el progreso desde cero"
                     className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 shadow-2xs"
                   >
                     <Trash2 size={13} /> Reiniciar
