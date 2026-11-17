@@ -20,7 +20,11 @@ import {
   playBeepTone,
   createAudioLevelMeter,
   evaluateInterviewSpoken,
+  evaluateSpeakingWithGemini,
+  GeminiSpeakingEvaluation,
   InterviewEvaluationResult,
+  requestMicrophoneAccess,
+  getSupportedAudioMimeType,
 } from '../utils/audioRecording.ts';
 
 interface SpeakingInterviewViewProps {
@@ -28,7 +32,12 @@ interface SpeakingInterviewViewProps {
   questionIndex: number; // 0 to 3 (Questions 8 to 11)
   totalInterviewQuestions: number; // 4
   volume: number;
-  onFinishResponse: (transcript: string, audioBlob?: Blob, audioUrl?: string) => void;
+  onFinishResponse: (
+    transcript: string,
+    audioBlob?: Blob,
+    audioUrl?: string,
+    aiEval?: GeminiSpeakingEvaluation,
+  ) => void;
   onNext: () => void;
   onBack?: () => void;
 }
@@ -53,6 +62,9 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
   const [isPlayingRecorded, setIsPlayingRecorded] = useState(false);
   const [isPlayingQuestion, setIsPlayingQuestion] = useState(false);
   const [evaluation, setEvaluation] = useState<InterviewEvaluationResult | null>(null);
+  const [geminiEvaluation, setGeminiEvaluation] = useState<GeminiSpeakingEvaluation | null>(null);
+  const [isAiEvaluating, setIsAiEvaluating] = useState<boolean>(false);
+  const [micError, setMicError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const userAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
@@ -67,10 +79,12 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
   const speechRecognitionRef = useRef<any>(null);
   const meterCleanupRef = useRef<(() => void) | null>(null);
   const isTransitioningRef = useRef<boolean>(false);
+  const hasFinalizedRef = useRef<boolean>(false);
 
   // Spoken interview audio when screen opens
   useEffect(() => {
     isTransitioningRef.current = false;
+    hasFinalizedRef.current = false;
     setPhase('listening');
     setCountdownSeconds(3);
     setSecondsRemaining(question.responseTimeSeconds || 45);
@@ -80,6 +94,9 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     audioBlobRef.current = null;
     setRecordedAudioUrl(null);
     setEvaluation(null);
+    setGeminiEvaluation(null);
+    setIsAiEvaluating(false);
+    setMicError(null);
     setIsMicActive(false);
     setAudioLevel(0);
 
@@ -286,62 +303,63 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
   };
 
   const startMicrophone = async () => {
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-        mediaStreamRef.current = stream;
+    setMicError(null);
+    hasFinalizedRef.current = false;
 
-        // Hook up live VU volume meter
-        if (meterCleanupRef.current) meterCleanupRef.current();
-        meterCleanupRef.current = createAudioLevelMeter(stream, (lvl) => {
-          setAudioLevel(lvl);
-        });
+    const micResult = await requestMicrophoneAccess();
+    if (micResult.granted && micResult.stream) {
+      const stream = micResult.stream;
+      mediaStreamRef.current = stream;
 
-        let mimeType = '';
-        if (typeof MediaRecorder !== 'undefined') {
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            mimeType = 'audio/webm;codecs=opus';
-          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            mimeType = 'audio/webm';
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            mimeType = 'audio/mp4';
-          }
+      // Hook up live VU volume meter
+      if (meterCleanupRef.current) meterCleanupRef.current();
+      meterCleanupRef.current = createAudioLevelMeter(stream, (lvl) => {
+        setAudioLevel(lvl);
+      });
+
+      if (typeof MediaRecorder !== 'undefined') {
+        try {
+          const mimeType = getSupportedAudioMimeType();
+          const recorder = mimeType
+            ? new MediaRecorder(stream, { mimeType })
+            : new MediaRecorder(stream);
+          mediaRecorderRef.current = recorder;
+
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+              audioChunksRef.current.push(e.data);
+            }
+          };
+
+          recorder.onstop = () => {
+            const blobType = mimeType || 'audio/webm';
+            const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
+            audioBlobRef.current = audioBlob;
+            const url = URL.createObjectURL(audioBlob);
+            setRecordedAudioUrl(url);
+
+            const transcriptToUse = recordedTranscriptRef.current;
+            finalizeEvaluation(transcriptToUse, audioBlob, url);
+          };
+
+          recorder.start(250);
+          setIsMicActive(true);
+        } catch (recErr: any) {
+          setMicError(
+            `Error iniciando MediaRecorder: ${recErr?.message || String(recErr)}`,
+          );
+          setIsMicActive(false);
         }
-
-        const recorder = mimeType
-          ? new MediaRecorder(stream, { mimeType })
-          : new MediaRecorder(stream);
-        mediaRecorderRef.current = recorder;
-
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
-          }
-        };
-
-        recorder.onstop = () => {
-          const blobType = mimeType || 'audio/webm';
-          const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
-          audioBlobRef.current = audioBlob;
-          const url = URL.createObjectURL(audioBlob);
-          setRecordedAudioUrl(url);
-
-          const transcriptToUse = recordedTranscriptRef.current;
-          finalizeEvaluation(transcriptToUse, audioBlob, url);
-        };
-
-        recorder.start(500);
-        setIsMicActive(true);
+      } else {
+        setMicError('Este navegador no soporta grabación MediaRecorder.');
+        setIsMicActive(false);
       }
-    } catch (err) {
-      console.warn('Microphone permission or hardware error:', err);
-      setIsMicActive(true);
+    } else {
+      setMicError(
+        micResult.error ||
+          'No se pudo acceder al micrófono. Verifica los permisos del navegador.',
+      );
+      setIsMicActive(false);
     }
 
     const SpeechRec =
@@ -382,6 +400,10 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
         mediaRecorderRef.current.stop();
       } catch {}
     }
+    if (meterCleanupRef.current) {
+      meterCleanupRef.current();
+      meterCleanupRef.current = null;
+    }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
@@ -399,26 +421,37 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
+    const recorderActive =
+      mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive';
     stopMicrophone();
 
     setTimeout(() => {
-      if (!evaluation) {
+      if (!hasFinalizedRef.current && !recorderActive) {
+        finalizeEvaluation(
+          recordedTranscriptRef.current,
+          audioBlobRef.current || undefined,
+          recordedAudioUrl || undefined,
+        );
+      } else if (!hasFinalizedRef.current) {
         finalizeEvaluation(
           recordedTranscriptRef.current,
           audioBlobRef.current || undefined,
           recordedAudioUrl || undefined,
         );
       }
-    }, 250);
+    }, 600);
   };
 
-  const finalizeEvaluation = (
+  const finalizeEvaluation = async (
     transcript: string,
     audioBlob?: Blob,
     audioUrl?: string,
   ) => {
+    if (hasFinalizedRef.current) return;
+    hasFinalizedRef.current = true;
+
     const textToEvaluate = (transcript || '').trim();
-    const hasAudio = !!audioBlob && audioBlob.size > 1000;
+    const hasAudio = !!audioBlob && audioBlob.size > 1500;
     const evalResult = evaluateInterviewSpoken(
       textToEvaluate,
       question.sampleModelAnswer,
@@ -428,6 +461,38 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
     setEvaluation(evalResult);
     setPhase('completed');
     onFinishResponse(textToEvaluate, audioBlob, audioUrl);
+
+    // Call real Gemini Audio Evaluation in background
+    setIsAiEvaluating(true);
+    try {
+      const aiResult = await evaluateSpeakingWithGemini(
+        audioBlob,
+        textToEvaluate,
+        question.questionSpoken,
+        'interview',
+        question.topic,
+        question.responseTimeSeconds || 45,
+        question.sampleModelAnswer,
+      );
+      setGeminiEvaluation(aiResult);
+      const effectiveTranscript = (aiResult.transcript || textToEvaluate).trim();
+      if (aiResult.transcript && aiResult.transcript.trim()) {
+        setRecordedTranscript(aiResult.transcript.trim());
+        recordedTranscriptRef.current = aiResult.transcript.trim();
+        const updatedLocal = evaluateInterviewSpoken(
+          aiResult.transcript.trim(),
+          question.sampleModelAnswer,
+          question.responseTimeSeconds || 45,
+          hasAudio,
+        );
+        setEvaluation(updatedLocal);
+      }
+      onFinishResponse(effectiveTranscript, audioBlob, audioUrl, aiResult);
+    } catch (e) {
+      console.warn('Gemini interview eval call failed:', e);
+    } finally {
+      setIsAiEvaluating(false);
+    }
   };
 
   const handlePlayRecorded = () => {
@@ -474,7 +539,7 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
         <div className="relative rounded-2xl overflow-hidden border-2 border-gray-300 shadow-md max-w-md w-full bg-slate-900 flex items-center justify-center">
           <img
             src={question.interviewerImage}
-            alt="Researcher Dr. Sarah Adams"
+            alt={`Entrevistador: ${question.interviewerName}`}
             className="w-full h-auto object-cover max-h-[320px]"
           />
 
@@ -671,6 +736,113 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
                 {evaluation.feedback}
               </p>
             </div>
+
+            {micError && (
+              <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 font-semibold">
+                ⚠️ {micError}
+              </div>
+            )}
+
+            {/* Gemini AI Acoustic & Fluency Evaluation */}
+            {isAiEvaluating && (
+              <div className="rounded-xl border border-teal-200 bg-teal-50/70 p-3.5 flex items-center gap-3 text-xs text-teal-900 animate-pulse">
+                <Sparkles size={16} className="text-teal-600 shrink-0 animate-spin" />
+                <span className="font-semibold">
+                  Evaluando discurso, fluidez, pronunciación y gramática con IA (Estimación práctica ETS 2026)...
+                </span>
+              </div>
+            )}
+
+            {geminiEvaluation && (
+              <div
+                className={`rounded-xl border p-4 space-y-2.5 text-xs ${
+                  !geminiEvaluation.evaluated
+                    ? 'border-amber-300 bg-amber-50 text-amber-950'
+                    : 'border-teal-200 bg-teal-50/80 text-teal-950'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/50 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={15} className="text-teal-700" />
+                    <span className="font-bold">
+                      Evaluación Oral de IA • Estimación de Práctica (ETS 2026):
+                    </span>
+                  </div>
+                  {geminiEvaluation.evaluated ? (
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-teal-700 px-2 py-0.5 font-mono text-[11px] font-black text-white">
+                        Banda Est.: {geminiEvaluation.overallScore.toFixed(1)} / 6.0
+                      </span>
+                      <span className="rounded-md bg-white border border-teal-300 px-2 py-0.5 text-[11px] font-bold text-teal-800">
+                        ~{geminiEvaluation.scaledScore30} / 30 pts
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="rounded-md bg-amber-200 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                      ⚠️ No evaluado
+                    </span>
+                  )}
+                </div>
+
+                {geminiEvaluation.transcript && (
+                  <p className="text-xs italic bg-white/80 rounded-lg p-2 border border-teal-200">
+                    <strong className="not-italic text-teal-900">Transcripción real detectada:</strong> "{geminiEvaluation.transcript}"
+                  </p>
+                )}
+
+                <p className="text-xs leading-relaxed font-medium">
+                  {geminiEvaluation.feedback}
+                </p>
+
+                {geminiEvaluation.grammarErrors &&
+                  geminiEvaluation.grammarErrors.length > 0 && (
+                    <div>
+                      <span className="font-bold text-gray-700 block mb-1">
+                        Puntos gramaticales a pulir:
+                      </span>
+                      <ul className="space-y-1.5 text-[11px] text-gray-700">
+                        {geminiEvaluation.grammarErrors.map((ge, gIdx) =>
+                          typeof ge === 'string' ? (
+                            <li key={gIdx} className="list-disc ml-4">{ge}</li>
+                          ) : (
+                            <li
+                              key={gIdx}
+                              className="rounded-lg bg-amber-50/90 border border-amber-200 px-2.5 py-1.5 text-amber-950"
+                            >
+                              <span className="line-through text-rose-700">{ge.mistake}</span>{' '}
+                              ➔ <strong className="text-emerald-800">{ge.correction}</strong>
+                              {ge.explanation && (
+                                <span className="block text-gray-600 mt-0.5">{ge.explanation}</span>
+                              )}
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    </div>
+                  )}
+
+                {geminiEvaluation.recommendations &&
+                  geminiEvaluation.recommendations.length > 0 && (
+                    <div>
+                      <span className="font-bold text-gray-700 block mb-1">
+                        Recomendaciones para el examen:
+                      </span>
+                      <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-gray-700">
+                        {geminiEvaluation.recommendations.map((rec, rIdx) => (
+                          <li key={rIdx}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                {geminiEvaluation.modelResponse && (
+                  <div className="rounded-lg bg-white/90 border border-teal-200 p-2.5 text-[11px] text-gray-800">
+                    <strong className="text-teal-900 block mb-0.5">Respuesta mejorada sugerida (C1):</strong>
+                    "{geminiEvaluation.modelResponse}"
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -710,8 +882,8 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
             >
               <span>
                 {isLastQuestion
-                  ? 'Finalizar y Calificar Speaking Oficial &gt;'
-                  : 'Siguiente Pregunta (45s) &gt;'}
+                  ? 'Finalizar y Calificar Speaking'
+                  : 'Siguiente Pregunta (45s)'}
               </span>
               <ChevronRight size={16} />
             </button>
@@ -723,7 +895,7 @@ export const SpeakingInterviewView: React.FC<SpeakingInterviewViewProps> = ({
             >
               <span>
                 {isLastQuestion
-                  ? 'Finalizar Speaking &gt;'
+                  ? 'Finalizar Speaking'
                   : 'Siguiente Pregunta (Next)'}
               </span>
               <ChevronRight size={15} />

@@ -19,6 +19,9 @@ import {
   requestMicrophoneAccess,
   createAudioLevelMeter,
   playBeepTone,
+  getSavedMicDeviceId,
+  setSavedMicDeviceId,
+  getSupportedAudioMimeType,
 } from '../utils/audioRecording.ts';
 
 interface MicrophoneCheckModalProps {
@@ -40,6 +43,8 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
   const [isTestRecording, setIsTestRecording] = useState(false);
   const [testAudioUrl, setTestAudioUrl] = useState<string | null>(null);
   const [isPlayingTest, setIsPlayingTest] = useState(false);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => getSavedMicDeviceId());
 
   const streamRef = useRef<MediaStream | null>(null);
   const meterCleanupRef = useRef<(() => void) | null>(null);
@@ -76,21 +81,38 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
     setIsPlayingTest(false);
   };
 
-  const handleRequestPermission = async () => {
+  const enumerateAudioDevices = async () => {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const allDevices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = allDevices.filter((d) => d.kind === 'audioinput');
+        setDevices(audioInputs);
+        const saved = getSavedMicDeviceId();
+        if (saved && audioInputs.some((d) => d.deviceId === saved)) {
+          setSelectedDeviceId(saved);
+        } else if (audioInputs.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(audioInputs[0].deviceId);
+          setSavedMicDeviceId(audioInputs[0].deviceId);
+        }
+      }
+    } catch {}
+  };
+
+  const handleRequestPermission = async (deviceId?: string) => {
     setErrorMessage(null);
-    const result = await requestMicrophoneAccess();
+    const result = await requestMicrophoneAccess(deviceId);
     if (result.granted && result.stream) {
       streamRef.current = result.stream;
       setPermissionStatus('granted');
 
+      // Enumerate available microphones
+      await enumerateAudioDevices();
+
       // Start live VU meter
       if (meterCleanupRef.current) meterCleanupRef.current();
-      meterCleanupRef.current = createAudioLevelMeter(
-        result.stream,
-        (level) => {
-          setAudioLevel(level);
-        },
-      );
+      meterCleanupRef.current = createAudioLevelMeter(result.stream, (level) => {
+        setAudioLevel(level);
+      });
     } else {
       setPermissionStatus('denied');
       setErrorMessage(
@@ -100,30 +122,42 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
     }
   };
 
+  const handleDeviceChange = (newDeviceId: string) => {
+    setSelectedDeviceId(newDeviceId);
+    setSavedMicDeviceId(newDeviceId);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    handleRequestPermission(newDeviceId);
+  };
+
   // Quick 3-second test recording
   const handleStartTestRecording = () => {
-    if (!streamRef.current) return;
+    if (!streamRef.current || typeof MediaRecorder === 'undefined') return;
     playBeepTone(880, 200);
     audioChunksRef.current = [];
     setTestAudioUrl(null);
     setIsTestRecording(true);
 
     try {
-      const recorder = new MediaRecorder(streamRef.current);
+      const mimeType = getSupportedAudioMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(streamRef.current, { mimeType })
+        : new MediaRecorder(streamRef.current);
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
         const url = URL.createObjectURL(blob);
         setTestAudioUrl(url);
         setIsTestRecording(false);
       };
 
-      recorder.start();
+      recorder.start(250);
 
       // Automatically record for 3 seconds then stop
       setTimeout(() => {
@@ -197,6 +231,25 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
                 <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
                 <span>¡Micrófono conectado y detectando audio!</span>
               </div>
+
+              {devices.length > 1 && (
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-emerald-900 block">
+                    Dispositivo de entrada de audio:
+                  </label>
+                  <select
+                    value={selectedDeviceId}
+                    onChange={(e) => handleDeviceChange(e.target.value)}
+                    className="w-full text-xs font-semibold rounded-lg border border-emerald-300 bg-white p-2 text-gray-800 shadow-2xs focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {devices.map((d, idx) => (
+                      <option key={d.deviceId || idx} value={d.deviceId}>
+                        {d.label || `Micrófono ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {/* Live VU Meter */}
               <div className="space-y-1.5">
@@ -272,7 +325,7 @@ export const MicrophoneCheckModal: React.FC<MicrophoneCheckModalProps> = ({
 
               <div className="pt-2">
                 <button
-                  onClick={handleRequestPermission}
+                  onClick={() => handleRequestPermission()}
                   className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#0f6b64] py-3 px-4 text-xs sm:text-sm font-bold text-white hover:bg-[#0c5650] shadow-md transition transform active:scale-98"
                 >
                   <Mic size={18} />

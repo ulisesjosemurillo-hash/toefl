@@ -307,6 +307,20 @@ export interface TestAttempt {
   strengths: string[];
   weaknesses: string[];
   recommendations: string[];
+  etsBandScore2026?: number; // 1.0 to 6.0 (0.5 increments)
+  etsBandBreakdown2026?: {
+    reading: number;
+    listening: number;
+    writing: number;
+    speaking: number;
+    total: number;
+  };
+  aiDetailedEvaluations?: {
+    writingEmail?: { overallScore: number; feedback: string; [key: string]: unknown };
+    writingDiscussion?: { overallScore: number; feedback: string; [key: string]: unknown };
+    speakingItems?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
   aiFeedback?: string;
   questionResults: QuestionResultItem[];
 }

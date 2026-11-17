@@ -50,7 +50,15 @@ interface ProgressTrackingViewProps {
   availableListeningTests?: ListeningTest[];
   availableWritingTests?: WritingTest[];
   availableSpeakingTests?: SpeakingTest[];
-  onStartFullExam?: () => void;
+  savedSession?: {
+    savedAt: number;
+    examVariant: 'A' | 'B';
+    fullExamCurrentSection: 'reading' | 'listening' | 'writing' | 'speaking';
+    isFullExamMode: boolean;
+  } | null;
+  onResumeSavedSession?: () => void;
+  onDiscardSavedSession?: () => void;
+  onStartFullExam?: (variant: 'A' | 'B') => void;
   onStartTest: (test: ToeflTest) => void;
   onStartListeningTest?: (test: ListeningTest) => void;
   onStartWritingTest?: (test: WritingTest) => void;
@@ -71,12 +79,14 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
   availableWritingTests = [],
   availableSpeakingTests = [],
   initialTab = 'overview',
+  savedSession,
+  onResumeSavedSession,
+  onDiscardSavedSession,
   onStartFullExam,
   onStartTest,
   onStartListeningTest,
   onStartWritingTest,
   onStartSpeakingTest,
-  onStartDynamicTest,
   onViewAttemptReport,
   onGenerateTestWithAi,
   isGeneratingTest,
@@ -160,13 +170,13 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-200 pb-5">
           <div>
             <span className="text-xs font-bold uppercase tracking-wider text-[#0f6b64]">
-              Panel de Rendimiento Personalizado
+              Simulador Completo ETS • Formato Vigente Enero 2026
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-              Seguimiento de Progreso TOEFL iBT®
+              Simulador Oficial TOEFL iBT®
             </h1>
             <p className="text-xs sm:text-sm text-gray-500">
-              Todos tus resultados se almacenan automáticamente en tu base de datos local.
+              Elige una de las dos modalidades completas (Reading, Listening, Writing y Speaking) y recibe tu banda 1.0 – 6.0 + equivalencia 0 – 120.
             </p>
           </div>
 
@@ -179,17 +189,7 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
                   : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
               }`}
             >
-              <TrendingUp size={14} className="inline mr-1.5" /> Métricas & Análisis
-            </button>
-            <button
-              onClick={() => setActiveTab('catalog')}
-              className={`rounded-lg px-4 py-2 text-xs font-bold transition shadow-2xs ${
-                activeTab === 'catalog'
-                  ? 'bg-[#0f6b64] text-white'
-                  : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
-              }`}
-            >
-              <BookOpen size={14} className="inline mr-1.5" /> Biblioteca de Exámenes ({availableTests.length})
+              <TrendingUp size={14} className="inline mr-1.5" /> Exámenes y Métricas
             </button>
             <button
               onClick={() => setActiveTab('history')}
@@ -199,7 +199,7 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
                   : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
               }`}
             >
-              <Layers size={14} className="inline mr-1.5" /> Historial Completo ({attempts.length})
+              <Layers size={14} className="inline mr-1.5" /> Historial ({attempts.length})
             </button>
           </div>
         </div>
@@ -210,258 +210,134 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
           </div>
         )}
 
-        {/* TAB 1: OVERVIEW & ANALYTICS */}
+        {/* TAB 1: OVERVIEW & ONLY 2 MAIN EXAM MODALITIES */}
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* FULL TOEFL iBT EXAM HERO BANNER (120 POINTS) */}
-            {onStartFullExam && (
-              <div className="rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-[#093d39] via-[#0f6b64] to-[#0c5650] text-white p-6 sm:p-7 shadow-xl flex flex-col lg:flex-row items-center justify-between gap-6 relative overflow-hidden">
-                <div className="absolute top-0 right-0 transform translate-x-8 -translate-y-8 opacity-10 text-9xl pointer-events-none select-none font-black text-white">
-                  120
+            {/* Resume Active Interrupted Session Banner */}
+            {savedSession && onResumeSavedSession && (
+              <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-amber-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">
+                      Sesión Guardada Automáticamente
+                    </span>
+                    <span className="text-xs font-semibold text-amber-900">
+                      {new Date(savedSession.savedAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900">
+                    Tienes un examen en curso ({savedSession.examVariant === 'B' ? 'Opción B: Prueba Nueva' : 'Opción A: Prueba del TOEFL'}) en la sección{' '}
+                    <span className="uppercase text-[#0f6b64]">{savedSession.fullExamCurrentSection}</span>.
+                  </p>
                 </div>
 
-                <div className="flex items-start gap-4 z-10">
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-amber-400/20 text-amber-300 shadow-md text-3xl border border-amber-300/40">
-                    🏆
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-amber-400 text-gray-900 px-3 py-0.5 text-[11px] font-black uppercase tracking-wider shadow-xs">
-                        ⭐ EXAMEN COMPLETO OFICIAL • ESCALA 0 - 120
-                      </span>
-                      <span className="text-xs text-amber-200 font-bold">
-                        4 Secciones Integradas en un Solo Examen
-                      </span>
-                    </div>
-                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight leading-snug">
-                      Simulacro Oficial Completo TOEFL iBT® (Todas las Secciones)
-                    </h2>
-                    <p className="text-xs sm:text-sm text-teal-100 max-w-2xl leading-relaxed">
-                      Completa el examen oficial de principio a fin en un flujo continuo: <strong>Reading</strong> (20 preguntas) ➔ <strong>Listening</strong> (28 preguntas con audio) ➔ <strong>Writing</strong> (12 tareas de oraciones, email y discusión) ➔ <strong>Speaking</strong> (11 preguntas con micrófono real de 10s y 45s). Al finalizar, obtendrás tu <strong>nota final sobre 120 puntos</strong>, tu nivel <strong>CEFR</strong> y el reporte de cada sección.
-                    </p>
-                    <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-teal-200 pt-1">
-                      <span className="flex items-center gap-1.5">📖 Reading (30 pts)</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1.5">🎧 Listening (30 pts)</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1.5">✍️ Writing (30 pts)</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1.5">🗣️ Speaking (30 pts)</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-center gap-3 w-full lg:w-auto shrink-0 z-10">
+                <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
+                  {onDiscardSavedSession && (
+                    <button
+                      onClick={onDiscardSavedSession}
+                      className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100 transition"
+                    >
+                      Descartar
+                    </button>
+                  )}
                   <button
-                    onClick={onStartFullExam}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-gray-950 px-7 py-4 text-sm sm:text-base font-black hover:from-amber-300 hover:to-amber-400 shadow-lg hover:shadow-xl transition transform active:scale-98"
+                    onClick={onResumeSavedSession}
+                    className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#0f6b64] px-4 py-2 text-xs font-black text-white hover:bg-[#0c5650] shadow transition"
                   >
-                    <span>Iniciar Examen Completo (120 pts) 🏆</span>
+                    <Play size={14} className="fill-white" /> Continuar Examen
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ONLY TWO MAIN EXAM MODALITIES */}
+            {onStartFullExam && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* OPCIÓN A: PRUEBA DEL TOEFL (BANCO ORIGINAL) */}
+                <div className="rounded-2xl border-2 border-[#0f6b64] bg-gradient-to-br from-[#093d39] via-[#0f6b64] to-[#135c56] text-white p-6 shadow-xl flex flex-col justify-between gap-6 relative overflow-hidden">
+                  <div className="space-y-3 z-10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="rounded-full bg-amber-400 text-gray-950 px-3 py-0.5 text-[11px] font-black uppercase tracking-wider">
+                        OPCIÓN A • PRUEBA DEL TOEFL
+                      </span>
+                      <span className="text-xs font-bold text-teal-200">
+                        Banco Original ETS
+                      </span>
+                    </div>
+
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight leading-snug">
+                      Prueba Completa del TOEFL iBT®
+                    </h2>
+
+                    <p className="text-xs sm:text-sm text-teal-100 leading-relaxed">
+                      Examen completo con el banco original del repositorio de principio a fin, siguiendo la estructura oficial vigente ETS (Enero 2026).
+                    </p>
+
+                    <div className="rounded-xl bg-white/10 border border-white/15 p-3.5 space-y-1.5 text-xs text-teal-50">
+                      <p><strong>1. Reading (20q):</strong> Complete the Words, Read in Daily Life &amp; A History of Mirrors.</p>
+                      <p><strong>2. Listening (28q):</strong> 18 Best Responses + Conversaciones y Attention Restoration Theory.</p>
+                      <p><strong>3. Writing (12 tareas):</strong> 10 Build a Sentence, Email de Solicitud y Discusión sobre Voluntariado.</p>
+                      <p><strong>4. Speaking (11q):</strong> 7 Listen &amp; Repeat (Zoológico, 10s) + 4 Interview (Dr. Sarah Adams, 45s).</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => onStartFullExam('A')}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-amber-400 text-gray-950 px-6 py-4 text-sm font-black hover:bg-amber-300 shadow-lg transition transform active:scale-98 z-10"
+                  >
+                    <span>Iniciar Opción A: Prueba del TOEFL</span>
+                    <ChevronRight size={18} />
+                  </button>
+                </div>
+
+                {/* OPCIÓN B: PRUEBA NUEVA (100% CONTENIDO DISTINTO) */}
+                <div className="rounded-2xl border-2 border-indigo-600 bg-gradient-to-br from-[#1b2448] via-[#263468] to-[#1e3a5f] text-white p-6 shadow-xl flex flex-col justify-between gap-6 relative overflow-hidden">
+                  <div className="space-y-3 z-10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="rounded-full bg-emerald-400 text-gray-950 px-3 py-0.5 text-[11px] font-black uppercase tracking-wider">
+                        OPCIÓN B • PRUEBA NUEVA
+                      </span>
+                      <span className="text-xs font-bold text-indigo-200">
+                        Contenido 100% Diferente
+                      </span>
+                    </div>
+
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight leading-snug">
+                      Prueba Nueva Equivalente TOEFL iBT®
+                    </h2>
+
+                    <p className="text-xs sm:text-sm text-indigo-100 leading-relaxed">
+                      Segundo examen completo e inédito con textos, audios, conversaciones, ejercicios escritos y entrevista oral totalmente distintos, con el mismo formato y dificultad oficial.
+                    </p>
+
+                    <div className="rounded-xl bg-white/10 border border-white/15 p-3.5 space-y-1.5 text-xs text-indigo-50">
+                      <p><strong>1. Reading (20q):</strong> The Human Brain, Emails (Art Workshop &amp; Gym) y Paradox of Choice.</p>
+                      <p><strong>2. Listening (28q):</strong> 18 nuevos diálogos + Biblioteca, Proyecto Grupal y Bioluminiscencia Marina.</p>
+                      <p><strong>3. Writing (12 tareas):</strong> 10 nuevas oraciones, Email de Alojamiento y Debate de Semana de 4 Días.</p>
+                      <p><strong>4. Speaking (11q):</strong> 7 Listen &amp; Repeat (Museo de Ciencias, 10s) + 4 Interview (Dr. David Chen, 45s).</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => onStartFullExam('B')}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-400 text-gray-950 px-6 py-4 text-sm font-black hover:bg-emerald-300 shadow-lg transition transform active:scale-98 z-10"
+                  >
+                    <span>Iniciar Opción B: Prueba Nueva</span>
                     <ChevronRight size={18} />
                   </button>
                 </div>
               </div>
             )}
 
-            {/* New Official Listening Section Banner */}
-            {onStartListeningTest && availableListeningTests.length > 0 && (
-              <div className="rounded-2xl border-2 border-teal-700 bg-gradient-to-r from-[#0d4f49] via-[#0f6b64] to-[#125852] text-white p-6 shadow-lg flex flex-col md:flex-row items-center justify-between gap-6">
-                <div className="flex items-start gap-4">
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 text-white shadow-md text-2xl border border-white/20">
-                    🎧
-                  </div>
-                  <div className="space-y-1.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-emerald-300 text-teal-950 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider">
-                        Sección Oficial TOEFL • Audio & Voz Real
-                      </span>
-                      <span className="text-xs text-teal-200 font-semibold">
-                        Choose the Best Response (Preguntas 1-18)
-                      </span>
-                    </div>
-                    <h2 className="text-lg sm:text-xl font-extrabold text-white leading-snug">
-                      Sección de Listening: Escucha con Voz y Elige la Respuesta
-                    </h2>
-                    <p className="text-xs text-teal-100 max-w-2xl leading-relaxed">
-                      Las preguntas solo se escuchan por voz (no aparecen escritas en pantalla, tal como en el examen oficial TOEFL). Incluye las preguntas 4 y 5 con los personajes originales y audio con sintetizador de voz integrado.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
-                  <button
-                    onClick={() => onStartListeningTest(availableListeningTests[0])}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-white text-[#0f6b64] px-6 py-3.5 text-xs sm:text-sm font-black hover:bg-teal-50 shadow-md hover:shadow-lg transition transform active:scale-98"
-                  >
-                    <Volume2 size={18} />
-                    <span>Iniciar Examen de Listening 🎧</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Dynamic Practice Mode Banner */}
-            <div className="rounded-2xl border-2 border-emerald-500 bg-gradient-to-r from-emerald-50 via-teal-50 to-white p-6 shadow-md flex flex-col md:flex-row items-center justify-between gap-6">
-              <div className="flex items-start gap-4">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#0f6b64] text-white shadow-md text-2xl">
-                  🎲
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-900">
-                      Modo Práctica Dinámica • Información Nueva en Cada Intento
-                    </span>
-                  </div>
-                  <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-snug">
-                    Mismos Ejercicios con Información Diferente cada vez
-                  </h2>
-                  <p className="text-xs text-gray-600 max-w-2xl leading-relaxed">
-                    Mantén la misma estructura oficial de 3 ejercicios del TOEFL (Complete the Words, Read a Notice y Academic Passage), pero con textos, temas y preguntas que rotan automáticamente en cada intento para no repetir lo mismo.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto shrink-0">
-                {onStartDynamicTest && (
-                  <button
-                    onClick={onStartDynamicTest}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[#0f6b64] px-6 py-3.5 text-xs sm:text-sm font-black text-white hover:bg-[#0c5650] shadow-md hover:shadow-lg transition transform active:scale-98"
-                  >
-                    <Play size={16} className="fill-white" />
-                    <span>Iniciar Intento Dinámico 🎲</span>
-                  </button>
-                )}
-              </div>
+            {/* Official 2026 Format & Hardware Notice */}
+            <div className="rounded-xl border border-teal-200 bg-teal-50/80 px-5 py-3.5 text-xs text-teal-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span>
+                <strong>Sistema de Evaluación Vigente ETS (desde 21 Ene 2026):</strong> Escala de banda <strong>1.0 – 6.0</strong> (incrementos de 0.5) por sección y promedio global + equivalencia orientativa <strong>0 – 120</strong>.
+              </span>
+              <span className="font-semibold text-[#0f6b64] shrink-0">
+                🎙️ Micrófono real requerido en Speaking
+              </span>
             </div>
-
-            {/* Featured ETS Official Formats (Emails & Social Media) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Card 1: Art Workshop Email & Paradox of Choice (Test 10) */}
-              {(() => {
-                const test10 = availableTests.find((t) => t.id === 'test-10');
-                if (!test10) return null;
-                return (
-                  <div className="rounded-xl border border-teal-300 bg-gradient-to-r from-teal-50/80 via-white to-teal-50/30 p-5 shadow-xs flex flex-col justify-between gap-4">
-                    <div className="flex items-start gap-3.5">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#006d63] text-white shadow-xs text-lg">
-                        ✉️
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="rounded bg-[#006d63] text-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
-                            ETS Oficial
-                          </span>
-                          <span className="text-xs font-semibold text-teal-800">
-                            Read an Email • Taller de Arte
-                          </span>
-                        </div>
-                        <h3 className="font-bold text-gray-900 text-sm sm:text-base mt-1 leading-snug">
-                          El Cerebro Humano, Email de Confirmación & La Paradoja de la Elección
-                        </h3>
-                        <p className="text-xs text-gray-600 mt-1">
-                          Incluye el visor oficial de emails con To, From, Date y Subject + pasaje académico The Paradox of Choice.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between border-t border-teal-100 pt-3">
-                      <span className="text-[11px] font-semibold text-gray-500">
-                        10 palabras + 2 email + 5 academic
-                      </span>
-                      <button
-                        onClick={() => onStartTest(test10)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#006d63] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#00574f] shadow-xs transition"
-                      >
-                        <span>Practicar Test 10</span>
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Card 2: Fitness Center Grand Opening Email (Test 11) */}
-              {(() => {
-                const test11 = availableTests.find((t) => t.id === 'test-11');
-                if (!test11) return null;
-                return (
-                  <div className="rounded-xl border border-amber-300 bg-gradient-to-r from-amber-50/80 via-white to-amber-50/30 p-5 shadow-xs flex flex-col justify-between gap-4">
-                    <div className="flex items-start gap-3.5">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#99582a] text-white shadow-xs text-lg">
-                        🏋️
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="rounded bg-[#99582a] text-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
-                            ETS Oficial
-                          </span>
-                          <span className="text-xs font-semibold text-amber-900">
-                            Read an Email • Gimnasio
-                          </span>
-                        </div>
-                        <h3 className="font-bold text-gray-900 text-sm sm:text-base mt-1 leading-snug">
-                          Gran Inauguración de Gimnasio (Email) & Neuroplasticidad y Hábitos
-                        </h3>
-                        <p className="text-xs text-gray-600 mt-1">
-                          Visor de email con To, From, Subject + pasaje sobre Choice Architecture y formación de hábitos.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between border-t border-amber-100 pt-3">
-                      <span className="text-[11px] font-semibold text-gray-500">
-                        10 palabras + 3 email + 5 academic
-                      </span>
-                      <button
-                        onClick={() => onStartTest(test11)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-[#99582a] px-3.5 py-1.5 text-xs font-bold text-white hover:bg-[#804721] shadow-xs transition"
-                      >
-                        <span>Practicar Test 11</span>
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* Featured ETS Official Social Media Exercise Banner */}
-            {(() => {
-              const socialTest = availableTests.find(
-                (t) => t.id === 'test-9' || t.dailyLifeNotice.format === 'social_media_post',
-              );
-              if (!socialTest) return null;
-              return (
-                <div className="rounded-xl border border-teal-200 bg-gradient-to-r from-teal-50 via-white to-teal-50/50 p-5 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-3.5">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-teal-800 text-white shadow-xs text-lg">
-                      📱
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded bg-teal-700 text-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
-                          ETS Oficial • Formato Tablet
-                        </span>
-                        <span className="text-xs font-semibold text-gray-500">
-                          Read a Social Media Post
-                        </span>
-                      </div>
-                      <h3 className="font-bold text-gray-900 text-sm sm:text-base mt-0.5">
-                        Sofia Baker • Local Farmer's Market (Con simulador de Tablet y 3 preguntas)
-                      </h3>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => onStartTest(socialTest)}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg bg-[#0f6b64] px-4 py-2 text-xs font-bold text-white hover:bg-[#0c5650] shadow-xs shrink-0 transition"
-                  >
-                    <span>Practicar Ejercicio Social Media</span>
-                    <ChevronRight size={14} />
-                  </button>
-                </div>
-              );
-            })()}
 
             {/* KPI Cards Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -732,31 +608,6 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
               </div>
             </div>
 
-            {/* Call to action & quick start */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white p-6 shadow-xs">
-              <div>
-                <h4 className="font-bold text-gray-900 text-sm">
-                  ¿Listo para una nueva sesión de práctica?
-                </h4>
-                <p className="text-xs text-gray-500">
-                  Explora los módulos auténticos preconstruidos o genera un nuevo módulo temático con Inteligencia Artificial.
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowGenerateModal(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-teal-50 px-4 py-2 text-xs font-bold text-[#0f6b64] hover:bg-teal-100 transition shadow-2xs"
-                >
-                  <Sparkles size={14} /> Generar con IA
-                </button>
-                <button
-                  onClick={() => setActiveTab('catalog')}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0f6b64] px-4 py-2 text-xs font-bold text-white hover:bg-[#0c5650] transition shadow-md"
-                >
-                  <Play size={14} /> Comenzar Práctica
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
@@ -1144,7 +995,9 @@ export const ProgressTrackingView: React.FC<ProgressTrackingViewProps> = ({
                             </td>
                             <td className="py-3 px-4 text-center">
                               <span className="inline-block rounded-full bg-teal-100 px-2.5 py-0.5 font-black text-[#0f6b64]">
-                                {a.scaledScore} / 30
+                                {a.etsBandScore2026
+                                  ? `${a.etsBandScore2026.toFixed(1)} / 6.0 (${a.scaledScore}/120)`
+                                  : `${a.scaledScore} / ${a.testType === 'full' ? 120 : 30}`}
                               </span>
                             </td>
                             <td className="py-3 px-4 text-center">

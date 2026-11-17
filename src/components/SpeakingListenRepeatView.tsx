@@ -22,7 +22,11 @@ import {
   playBeepTone,
   createAudioLevelMeter,
   evaluateListenRepeatSpoken,
+  evaluateSpeakingWithGemini,
+  GeminiSpeakingEvaluation,
   RepeatEvaluationResult,
+  requestMicrophoneAccess,
+  getSupportedAudioMimeType,
 } from '../utils/audioRecording.ts';
 
 interface SpeakingListenRepeatViewProps {
@@ -30,7 +34,12 @@ interface SpeakingListenRepeatViewProps {
   questionIndex: number; // 0 to 6
   totalRepeatQuestions: number; // 7
   volume: number;
-  onFinishResponse: (transcript: string, audioBlob?: Blob, audioUrl?: string) => void;
+  onFinishResponse: (
+    transcript: string,
+    audioBlob?: Blob,
+    audioUrl?: string,
+    aiEval?: GeminiSpeakingEvaluation,
+  ) => void;
   onNext: () => void;
   onBack?: () => void;
 }
@@ -59,6 +68,9 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
   const [isPlayingRecorded, setIsPlayingRecorded] = useState(false);
   const [isPlayingOriginal, setIsPlayingOriginal] = useState(false);
   const [evaluation, setEvaluation] = useState<RepeatEvaluationResult | null>(null);
+  const [geminiEvaluation, setGeminiEvaluation] = useState<GeminiSpeakingEvaluation | null>(null);
+  const [isAiEvaluating, setIsAiEvaluating] = useState<boolean>(false);
+  const [micError, setMicError] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const userAudioPlayerRef = useRef<HTMLAudioElement | null>(null);
@@ -73,10 +85,12 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
   const speechRecognitionRef = useRef<any>(null);
   const meterCleanupRef = useRef<(() => void) | null>(null);
   const isTransitioningRef = useRef<boolean>(false);
+  const hasFinalizedRef = useRef<boolean>(false);
 
   // Play spoken sentence audio when question opens
   useEffect(() => {
     isTransitioningRef.current = false;
+    hasFinalizedRef.current = false;
     setPhase('listening');
     setCountdownSeconds(3);
     setSecondsRemaining(question.responseTimeSeconds || 10);
@@ -86,6 +100,9 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
     audioBlobRef.current = null;
     setRecordedAudioUrl(null);
     setEvaluation(null);
+    setGeminiEvaluation(null);
+    setIsAiEvaluating(false);
+    setMicError(null);
     setIsMicActive(false);
     setAudioLevel(0);
 
@@ -293,67 +310,67 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
   };
 
   const startMicrophone = async () => {
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
-        mediaStreamRef.current = stream;
+    setMicError(null);
+    hasFinalizedRef.current = false;
 
-        // Hook up live VU volume meter
-        if (meterCleanupRef.current) meterCleanupRef.current();
-        meterCleanupRef.current = createAudioLevelMeter(stream, (lvl) => {
-          setAudioLevel(lvl);
-        });
+    const micResult = await requestMicrophoneAccess();
+    if (micResult.granted && micResult.stream) {
+      const stream = micResult.stream;
+      mediaStreamRef.current = stream;
 
-        // Detect supported mime type
-        let mimeType = '';
-        if (typeof MediaRecorder !== 'undefined') {
-          if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            mimeType = 'audio/webm;codecs=opus';
-          } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-            mimeType = 'audio/webm';
-          } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
-            mimeType = 'audio/mp4';
-          }
+      // Hook up live VU volume meter
+      if (meterCleanupRef.current) meterCleanupRef.current();
+      meterCleanupRef.current = createAudioLevelMeter(stream, (lvl) => {
+        setAudioLevel(lvl);
+      });
+
+      if (typeof MediaRecorder !== 'undefined') {
+        try {
+          const mimeType = getSupportedAudioMimeType();
+          const recorder = mimeType
+            ? new MediaRecorder(stream, { mimeType })
+            : new MediaRecorder(stream);
+          mediaRecorderRef.current = recorder;
+
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+              audioChunksRef.current.push(e.data);
+            }
+          };
+
+          recorder.onstop = () => {
+            const blobType = mimeType || 'audio/webm';
+            const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
+            audioBlobRef.current = audioBlob;
+            const url = URL.createObjectURL(audioBlob);
+            setRecordedAudioUrl(url);
+
+            const transcriptToUse = recordedTranscriptRef.current;
+            finalizeEvaluation(transcriptToUse, audioBlob, url);
+          };
+
+          // Start recording with timeslice so chunks arrive continually
+          recorder.start(250);
+          setIsMicActive(true);
+        } catch (recErr: any) {
+          setMicError(
+            `Error iniciando MediaRecorder: ${recErr?.message || String(recErr)}`,
+          );
+          setIsMicActive(false);
         }
-
-        const recorder = mimeType
-          ? new MediaRecorder(stream, { mimeType })
-          : new MediaRecorder(stream);
-        mediaRecorderRef.current = recorder;
-
-        recorder.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
-          }
-        };
-
-        recorder.onstop = () => {
-          const blobType = mimeType || 'audio/webm';
-          const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
-          audioBlobRef.current = audioBlob;
-          const url = URL.createObjectURL(audioBlob);
-          setRecordedAudioUrl(url);
-
-          const transcriptToUse = recordedTranscriptRef.current;
-          finalizeEvaluation(transcriptToUse, audioBlob, url);
-        };
-
-        // Start recording with timeslice so chunks arrive continually
-        recorder.start(500);
-        setIsMicActive(true);
+      } else {
+        setMicError('Este navegador no soporta grabación MediaRecorder.');
+        setIsMicActive(false);
       }
-    } catch (err) {
-      console.warn('Microphone permission or hardware error:', err);
-      setIsMicActive(true);
+    } else {
+      setMicError(
+        micResult.error ||
+          'No se pudo acceder al micrófono. Verifica los permisos del navegador.',
+      );
+      setIsMicActive(false);
     }
 
-    // Start Web Speech recognition for real-time transcription
+    // Start Web Speech recognition (supplementary live preview; audio recording works independently)
     const SpeechRec =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
@@ -392,6 +409,10 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
         mediaRecorderRef.current.stop();
       } catch {}
     }
+    if (meterCleanupRef.current) {
+      meterCleanupRef.current();
+      meterCleanupRef.current = null;
+    }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
@@ -409,26 +430,38 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
       clearInterval(timerIntervalRef.current);
       timerIntervalRef.current = null;
     }
+    const recorderActive =
+      mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive';
     stopMicrophone();
 
+    // Fallback finalization only if MediaRecorder wasn't running or onstop didn't fire
     setTimeout(() => {
-      if (!evaluation) {
+      if (!hasFinalizedRef.current && !recorderActive) {
+        finalizeEvaluation(
+          recordedTranscriptRef.current,
+          audioBlobRef.current || undefined,
+          recordedAudioUrl || undefined,
+        );
+      } else if (!hasFinalizedRef.current) {
         finalizeEvaluation(
           recordedTranscriptRef.current,
           audioBlobRef.current || undefined,
           recordedAudioUrl || undefined,
         );
       }
-    }, 250);
+    }, 600);
   };
 
-  const finalizeEvaluation = (
+  const finalizeEvaluation = async (
     transcript: string,
     audioBlob?: Blob,
     audioUrl?: string,
   ) => {
+    if (hasFinalizedRef.current) return;
+    hasFinalizedRef.current = true;
+
     const textToEvaluate = (transcript || '').trim();
-    const hasAudio = !!audioBlob && audioBlob.size > 1000;
+    const hasAudio = !!audioBlob && audioBlob.size > 1500;
     const evalResult = evaluateListenRepeatSpoken(
       textToEvaluate,
       question.spokenSentence,
@@ -437,6 +470,36 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
     setEvaluation(evalResult);
     setPhase('completed');
     onFinishResponse(textToEvaluate, audioBlob, audioUrl);
+
+    // Call real Gemini Audio Evaluation in background
+    setIsAiEvaluating(true);
+    try {
+      const aiResult = await evaluateSpeakingWithGemini(
+        audioBlob,
+        textToEvaluate,
+        question.spokenSentence,
+        'repeat',
+        undefined,
+        question.responseTimeSeconds || 10,
+      );
+      setGeminiEvaluation(aiResult);
+      const effectiveTranscript = (aiResult.transcript || textToEvaluate).trim();
+      if (aiResult.transcript && aiResult.transcript.trim()) {
+        setRecordedTranscript(aiResult.transcript.trim());
+        recordedTranscriptRef.current = aiResult.transcript.trim();
+        const updatedLocal = evaluateListenRepeatSpoken(
+          aiResult.transcript.trim(),
+          question.spokenSentence,
+          hasAudio,
+        );
+        setEvaluation(updatedLocal);
+      }
+      onFinishResponse(effectiveTranscript, audioBlob, audioUrl, aiResult);
+    } catch (e) {
+      console.warn('Gemini eval call failed:', e);
+    } finally {
+      setIsAiEvaluating(false);
+    }
   };
 
   const handlePlayRecorded = () => {
@@ -694,6 +757,102 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
 
               <p className="text-[11px] text-gray-600 max-w-sm">{evaluation.feedback}</p>
             </div>
+
+            {micError && (
+              <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 font-semibold">
+                ⚠️ {micError}
+              </div>
+            )}
+
+            {/* Gemini AI Detailed Acoustic Evaluation */}
+            {isAiEvaluating && (
+              <div className="rounded-xl border border-teal-200 bg-teal-50/70 p-3.5 flex items-center gap-3 text-xs text-teal-900 animate-pulse">
+                <Sparkles size={16} className="text-teal-600 shrink-0 animate-spin" />
+                <span className="font-semibold">
+                  Evaluando pronunciación, fonética y fluidez con IA (Estimación práctica ETS 2026)...
+                </span>
+              </div>
+            )}
+
+            {geminiEvaluation && (
+              <div
+                className={`rounded-xl border p-4 space-y-2.5 text-xs ${
+                  !geminiEvaluation.evaluated
+                    ? 'border-amber-300 bg-amber-50 text-amber-950'
+                    : 'border-teal-200 bg-teal-50/80 text-teal-950'
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-200/50 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={15} className="text-teal-700" />
+                    <span className="font-bold">
+                      Evaluación Oral de IA • Estimación de Práctica (ETS 2026):
+                    </span>
+                  </div>
+                  {geminiEvaluation.evaluated ? (
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-teal-700 px-2 py-0.5 font-mono text-[11px] font-black text-white">
+                        Banda Est.: {geminiEvaluation.overallScore.toFixed(1)} / 6.0
+                      </span>
+                      <span className="rounded-md bg-white border border-teal-300 px-2 py-0.5 text-[11px] font-bold text-teal-800">
+                        ~{geminiEvaluation.scaledScore30} / 30 pts
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="rounded-md bg-amber-200 px-2 py-0.5 text-[11px] font-black text-amber-900">
+                      ⚠️ No evaluado
+                    </span>
+                  )}
+                </div>
+
+                {geminiEvaluation.transcript && (
+                  <p className="text-xs italic bg-white/80 rounded-lg p-2 border border-teal-200">
+                    <strong className="not-italic text-teal-900">Transcripción real detectada:</strong> "{geminiEvaluation.transcript}"
+                  </p>
+                )}
+
+                <p className="text-xs leading-relaxed font-medium">
+                  {geminiEvaluation.feedback}
+                </p>
+
+                {geminiEvaluation.mispronouncedWords &&
+                  geminiEvaluation.mispronouncedWords.length > 0 && (
+                    <div>
+                      <span className="font-bold text-gray-700 block mb-1">
+                        Observaciones de pronunciación / palabras omitidas:
+                      </span>
+                      <div className="space-y-1.5">
+                        {geminiEvaluation.mispronouncedWords.map((mw, mIdx) =>
+                          typeof mw === 'string' ? (
+                            <span
+                              key={mIdx}
+                              className="inline-block mr-1.5 rounded-md bg-rose-100 border border-rose-300 px-2 py-0.5 font-semibold text-rose-800 text-[11px]"
+                            >
+                              {mw}
+                            </span>
+                          ) : (
+                            <div
+                              key={mIdx}
+                              className="rounded-lg bg-rose-50 border border-rose-200 px-2.5 py-1.5 text-[11px] text-rose-900"
+                            >
+                              <strong>{mw.word}</strong> (detectado como: <em>{mw.detectedAs}</em>) — {mw.advice}
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                {geminiEvaluation.recommendations &&
+                  geminiEvaluation.recommendations.length > 0 && (
+                    <ul className="list-disc pl-4 space-y-1 text-[11px] text-gray-700">
+                      {geminiEvaluation.recommendations.map((rec, rIdx) => (
+                        <li key={rIdx}>{rec}</li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -733,8 +892,8 @@ export const SpeakingListenRepeatView: React.FC<SpeakingListenRepeatViewProps> =
             >
               <span>
                 {questionIndex === totalRepeatQuestions - 1
-                  ? 'Continuar a Take an Interview &gt;'
-                  : 'Siguiente Frase &gt;'}
+                  ? 'Continuar a Take an Interview'
+                  : 'Siguiente Frase'}
               </span>
               <ChevronRight size={16} />
             </button>

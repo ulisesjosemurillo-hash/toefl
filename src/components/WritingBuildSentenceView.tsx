@@ -273,8 +273,8 @@ export const WritingBuildSentenceView: React.FC<WritingBuildSentenceViewProps> =
           >
             <span>
               {questionIndex === totalQuestions - 1
-                ? 'Continuar a Write an Email &gt;'
-                : 'Siguiente Pregunta (Next) &gt;'}
+                ? 'Continuar a Write an Email'
+                : 'Siguiente Pregunta (Next)'}
             </span>
             <ChevronRight size={16} />
           </button>

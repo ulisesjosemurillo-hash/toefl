@@ -51,10 +51,52 @@ import {
   saveAttempt,
   saveCustomTest,
 } from './utils/storage.ts';
+import {
+  evaluateWritingWithGemini,
+  GeminiSpeakingEvaluation,
+  GeminiWritingEvaluation,
+} from './utils/audioRecording.ts';
 import { getNextUnrepeatedTest } from './utils/testRotation.ts';
 
 type AppView = 'dashboard' | 'test' | 'report';
 type TestMode = 'reading' | 'listening' | 'writing' | 'speaking';
+
+const ACTIVE_SESSION_KEY = 'toefl_active_session_v1';
+
+export interface SavedExamSession {
+  savedAt: number;
+  isFullExamMode: boolean;
+  examVariant: 'A' | 'B';
+  fullExamCurrentSection: 'reading' | 'listening' | 'writing' | 'speaking';
+  testMode: TestMode;
+  activeTestId: string;
+  activeListeningTestId: string;
+  activeWritingTestId: string;
+  activeSpeakingTestId: string;
+  currentScreenIndex: number;
+  listeningScreenIndex: number;
+  writingScreenIndex: number;
+  speakingScreenIndex: number;
+  showSectionTransition: boolean;
+  transitionCompletedSection: 'reading' | 'listening' | 'writing';
+  userAnswersCW: Record<string, string>;
+  userAnswersMCQ: Record<string, number>;
+  userAnswersListening: Record<string, number>;
+  userSentenceSlots: Record<string, string[]>;
+  userEmailText: string;
+  userDiscussionText: string;
+  speakingRepeatTranscripts: Record<string, string>;
+  speakingInterviewTranscripts: Record<string, string>;
+  geminiSpeakingEvals: Record<string, GeminiSpeakingEvaluation>;
+  geminiWritingEvals: {
+    email?: GeminiWritingEvaluation;
+    discussion?: GeminiWritingEvaluation;
+  };
+  markedScreens: Record<number, boolean>;
+  timerSeconds: number;
+  fullExamStartTime: number;
+  testStartTime: number;
+}
 
 export type ListeningScreenItem =
   | {
@@ -223,14 +265,39 @@ export default function App() {
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [isMicCheckModalOpen, setIsMicCheckModalOpen] = useState(false);
 
-  // Full Exam Simulation Mode State (Reading + Listening + Writing + Speaking -> 120 pts)
+  // Full Exam Simulation Mode State (Opción A vs Opción B -> ETS 1.0-6.0 + 0-120)
   const [isFullExamMode, setIsFullExamMode] = useState(false);
+  const [examVariant, setExamVariant] = useState<'A' | 'B'>('A');
   const [fullExamCurrentSection, setFullExamCurrentSection] = useState<'reading' | 'listening' | 'writing' | 'speaking'>('reading');
   const [showSectionTransition, setShowSectionTransition] = useState(false);
   const [transitionCompletedSection, setTransitionCompletedSection] = useState<'reading' | 'listening' | 'writing'>('reading');
   const [fullExamStartTime, setFullExamStartTime] = useState(0);
+  const [geminiSpeakingEvals, setGeminiSpeakingEvals] = useState<Record<string, GeminiSpeakingEvaluation>>({});
+  const [geminiWritingEvals, setGeminiWritingEvals] = useState<{
+    email?: GeminiWritingEvaluation;
+    discussion?: GeminiWritingEvaluation;
+  }>({});
+  const [isEvaluatingExam, setIsEvaluatingExam] = useState(false);
+  const [savedSession, setSavedSession] = useState<SavedExamSession | null>(null);
 
   const timerRef = useRef<any>(null);
+
+  const loadSavedSession = (): SavedExamSession | null => {
+    try {
+      const raw = localStorage.getItem(ACTIVE_SESSION_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw) as SavedExamSession;
+    } catch {
+      return null;
+    }
+  };
+
+  const clearSavedSession = () => {
+    try {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch {}
+    setSavedSession(null);
+  };
 
   // Load persistent data from local storage on mount
   const refreshStorageData = () => {
@@ -238,11 +305,80 @@ export default function App() {
     setAttempts(loadedAttempts);
     setStats(getUserStats());
     setCustomTests(getCustomTests());
+    setSavedSession(loadSavedSession());
   };
 
   useEffect(() => {
     refreshStorageData();
   }, []);
+
+  // Persist active exam session automatically during test mode
+  useEffect(() => {
+    if (view !== 'test') return;
+    try {
+      const payload: SavedExamSession = {
+        savedAt: Date.now(),
+        isFullExamMode,
+        examVariant,
+        fullExamCurrentSection,
+        testMode,
+        activeTestId: activeTest.id,
+        activeListeningTestId: activeListeningTest.id,
+        activeWritingTestId: activeWritingTest.id,
+        activeSpeakingTestId: activeSpeakingTest.id,
+        currentScreenIndex,
+        listeningScreenIndex,
+        writingScreenIndex,
+        speakingScreenIndex,
+        showSectionTransition,
+        transitionCompletedSection,
+        userAnswersCW,
+        userAnswersMCQ,
+        userAnswersListening,
+        userSentenceSlots,
+        userEmailText,
+        userDiscussionText,
+        speakingRepeatTranscripts,
+        speakingInterviewTranscripts,
+        geminiSpeakingEvals,
+        geminiWritingEvals,
+        markedScreens,
+        timerSeconds,
+        fullExamStartTime,
+        testStartTime,
+      };
+      localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(payload));
+      setSavedSession(payload);
+    } catch {}
+  }, [
+    view,
+    isFullExamMode,
+    examVariant,
+    fullExamCurrentSection,
+    testMode,
+    activeTest.id,
+    activeListeningTest.id,
+    activeWritingTest.id,
+    activeSpeakingTest.id,
+    currentScreenIndex,
+    listeningScreenIndex,
+    writingScreenIndex,
+    speakingScreenIndex,
+    showSectionTransition,
+    transitionCompletedSection,
+    userAnswersCW,
+    userAnswersMCQ,
+    userAnswersListening,
+    userSentenceSlots,
+    userEmailText,
+    userDiscussionText,
+    speakingRepeatTranscripts,
+    speakingInterviewTranscripts,
+    geminiSpeakingEvals,
+    geminiWritingEvals,
+    markedScreens,
+    timerSeconds,
+  ]);
 
   // Timer interval handling
   useEffect(() => {
@@ -382,34 +518,54 @@ export default function App() {
     setIsMicCheckModalOpen(true);
   };
 
-  // Start Unified Full-Length TOEFL iBT Exam Simulation (120 pts)
-  const handleStartFullExam = () => {
+  // Start Unified Full-Length TOEFL iBT Exam Simulation (Opción A or Opción B)
+  const handleStartFullExam = (variant: 'A' | 'B' = 'A') => {
+    clearSavedSession();
+    setExamVariant(variant);
     setIsFullExamMode(true);
     setFullExamCurrentSection('reading');
     setShowSectionTransition(false);
     setFullExamStartTime(Date.now());
+    setGeminiSpeakingEvals({});
+    setGeminiWritingEvals({});
+
+    const readingForVariant =
+      variant === 'B'
+        ? OFFICIAL_PREBUILT_TESTS[1] || OFFICIAL_PREBUILT_TESTS[0]
+        : OFFICIAL_PREBUILT_TESTS[0];
+    const listeningForVariant =
+      variant === 'B'
+        ? OFFICIAL_LISTENING_TESTS[3] || OFFICIAL_LISTENING_TESTS[2]
+        : OFFICIAL_LISTENING_TESTS[2] || OFFICIAL_LISTENING_TESTS[0];
+    const writingForVariant =
+      variant === 'B'
+        ? OFFICIAL_WRITING_TESTS[1] || OFFICIAL_WRITING_TESTS[0]
+        : OFFICIAL_WRITING_TESTS[0];
+    const speakingForVariant =
+      variant === 'B'
+        ? OFFICIAL_SPEAKING_TESTS[1] || OFFICIAL_SPEAKING_TESTS[0]
+        : OFFICIAL_SPEAKING_TESTS[0];
 
     // 1. Reset Reading state
-    setActiveTest(OFFICIAL_PREBUILT_TESTS[0]);
+    setActiveTest(readingForVariant);
     setCurrentScreenIndex(0);
     setUserAnswersCW({});
     setUserAnswersMCQ({});
 
-    // 2. Reset Listening state (Full 28-question test)
-    const fullListening = OFFICIAL_LISTENING_TESTS[2] || OFFICIAL_LISTENING_TESTS[0];
-    setActiveListeningTest(fullListening);
+    // 2. Reset Listening state
+    setActiveListeningTest(listeningForVariant);
     setListeningScreenIndex(0);
     setUserAnswersListening({});
 
-    // 3. Reset Writing state (10 Build Sentence + Email + Discussion)
-    setActiveWritingTest(OFFICIAL_WRITING_TESTS[0]);
+    // 3. Reset Writing state
+    setActiveWritingTest(writingForVariant);
     setWritingScreenIndex(0);
     setUserSentenceSlots({});
     setUserEmailText('');
     setUserDiscussionText('');
 
-    // 4. Reset Speaking state (7 Repeat 10s + 4 Interview 45s)
-    setActiveSpeakingTest(OFFICIAL_SPEAKING_TESTS[0]);
+    // 4. Reset Speaking state
+    setActiveSpeakingTest(speakingForVariant);
     setSpeakingScreenIndex(0);
     setSpeakingRepeatTranscripts({});
     setSpeakingInterviewTranscripts({});
@@ -418,10 +574,89 @@ export default function App() {
 
     setMarkedScreens({});
     setTestMode('reading');
-    setTimerSeconds(18 * 60); // 18m Reading timer
+    setTimerSeconds(readingForVariant.estimatedMinutes * 60);
     setIsTimerRunning(true);
     setTestStartTime(Date.now());
     setView('test');
+    // Prompt initial microphone & audio check on exam entry
+    setIsMicCheckModalOpen(true);
+  };
+
+  // Resume interrupted session from localStorage
+  const handleResumeSavedSession = () => {
+    const sess = loadSavedSession();
+    if (!sess) return;
+
+    const foundReading =
+      allAvailableTests.find((t) => t.id === sess.activeTestId) ||
+      OFFICIAL_PREBUILT_TESTS[sess.examVariant === 'B' ? 1 : 0];
+    const foundListening =
+      OFFICIAL_LISTENING_TESTS.find((t) => t.id === sess.activeListeningTestId) ||
+      OFFICIAL_LISTENING_TESTS[sess.examVariant === 'B' ? 3 : 2];
+    const foundWriting =
+      OFFICIAL_WRITING_TESTS.find((t) => t.id === sess.activeWritingTestId) ||
+      OFFICIAL_WRITING_TESTS[sess.examVariant === 'B' ? 1 : 0];
+    const foundSpeaking =
+      OFFICIAL_SPEAKING_TESTS.find((t) => t.id === sess.activeSpeakingTestId) ||
+      OFFICIAL_SPEAKING_TESTS[sess.examVariant === 'B' ? 1 : 0];
+
+    setIsFullExamMode(sess.isFullExamMode);
+    setExamVariant(sess.examVariant || 'A');
+    setFullExamCurrentSection(sess.fullExamCurrentSection || 'reading');
+    setTestMode(sess.testMode || 'reading');
+    setActiveTest(foundReading);
+    setActiveListeningTest(foundListening);
+    setActiveWritingTest(foundWriting);
+    setActiveSpeakingTest(foundSpeaking);
+    setCurrentScreenIndex(sess.currentScreenIndex || 0);
+    setListeningScreenIndex(sess.listeningScreenIndex || 0);
+    setWritingScreenIndex(sess.writingScreenIndex || 0);
+    setSpeakingScreenIndex(sess.speakingScreenIndex || 0);
+    setShowSectionTransition(Boolean(sess.showSectionTransition));
+    setTransitionCompletedSection(sess.transitionCompletedSection || 'reading');
+    setUserAnswersCW(sess.userAnswersCW || {});
+    setUserAnswersMCQ(sess.userAnswersMCQ || {});
+    setUserAnswersListening(sess.userAnswersListening || {});
+    setUserSentenceSlots(sess.userSentenceSlots || {});
+    setUserEmailText(sess.userEmailText || '');
+    setUserDiscussionText(sess.userDiscussionText || '');
+    setSpeakingRepeatTranscripts(sess.speakingRepeatTranscripts || {});
+    setSpeakingInterviewTranscripts(sess.speakingInterviewTranscripts || {});
+    setSpeakingRepeatAudioUrls({});
+    setSpeakingInterviewAudioUrls({});
+    setGeminiSpeakingEvals(sess.geminiSpeakingEvals || {});
+    setGeminiWritingEvals(sess.geminiWritingEvals || {});
+    setMarkedScreens(sess.markedScreens || {});
+    setTimerSeconds(Math.max(15, sess.timerSeconds || 600));
+    setFullExamStartTime(sess.fullExamStartTime || Date.now());
+    setTestStartTime(sess.testStartTime || Date.now());
+    setIsTimerRunning(!sess.showSectionTransition);
+    setView('test');
+  };
+
+  const evaluateWritingTasksAsync = async (wTest: WritingTest, emailStr: string, discStr: string) => {
+    const [emailRes, discRes] = await Promise.all([
+      evaluateWritingWithGemini(
+        'email',
+        wTest.emailTask.scenario,
+        wTest.emailTask.instructions,
+        emailStr,
+        60,
+      ),
+      evaluateWritingWithGemini(
+        'academic_discussion',
+        wTest.academicDiscussionTask.professor.prompt,
+        wTest.academicDiscussionTask.instructions,
+        discStr,
+        wTest.academicDiscussionTask.minimumWords || 100,
+      ),
+    ]);
+    const evals = {
+      email: emailRes || undefined,
+      discussion: discRes || undefined,
+    };
+    setGeminiWritingEvals(evals);
+    return evals;
   };
 
   const handleCompleteReadingSectionInFullExam = () => {
@@ -434,7 +669,10 @@ export default function App() {
     setShowSectionTransition(false);
     setFullExamCurrentSection('listening');
     setTestMode('listening');
-    const fullListening = OFFICIAL_LISTENING_TESTS[2] || OFFICIAL_LISTENING_TESTS[0];
+    const fullListening =
+      examVariant === 'B'
+        ? OFFICIAL_LISTENING_TESTS[3] || OFFICIAL_LISTENING_TESTS[2]
+        : OFFICIAL_LISTENING_TESTS[2] || OFFICIAL_LISTENING_TESTS[0];
     setActiveListeningTest(fullListening);
     setListeningScreenIndex(0);
     setTimerSeconds(fullListening.estimatedMinutes * 60);
@@ -452,9 +690,13 @@ export default function App() {
     setShowSectionTransition(false);
     setFullExamCurrentSection('writing');
     setTestMode('writing');
-    setActiveWritingTest(OFFICIAL_WRITING_TESTS[0]);
+    const writingForVariant =
+      examVariant === 'B'
+        ? OFFICIAL_WRITING_TESTS[1] || OFFICIAL_WRITING_TESTS[0]
+        : OFFICIAL_WRITING_TESTS[0];
+    setActiveWritingTest(writingForVariant);
     setWritingScreenIndex(0);
-    setTimerSeconds(OFFICIAL_WRITING_TESTS[0].estimatedMinutes * 60);
+    setTimerSeconds(writingForVariant.estimatedMinutes * 60);
     setIsTimerRunning(true);
     setTestStartTime(Date.now());
   };
@@ -463,51 +705,78 @@ export default function App() {
     setIsTimerRunning(false);
     setTransitionCompletedSection('writing');
     setShowSectionTransition(true);
+    // Pre-evaluate writing essays in background while user transitions to Speaking
+    evaluateWritingTasksAsync(activeWritingTest, userEmailText, userDiscussionText).catch(() => {});
   };
 
   const handleProceedToSpeakingInFullExam = () => {
     setShowSectionTransition(false);
     setFullExamCurrentSection('speaking');
     setTestMode('speaking');
-    setActiveSpeakingTest(OFFICIAL_SPEAKING_TESTS[0]);
+    const speakingForVariant =
+      examVariant === 'B'
+        ? OFFICIAL_SPEAKING_TESTS[1] || OFFICIAL_SPEAKING_TESTS[0]
+        : OFFICIAL_SPEAKING_TESTS[0];
+    setActiveSpeakingTest(speakingForVariant);
     setSpeakingScreenIndex(0);
-    setTimerSeconds(OFFICIAL_SPEAKING_TESTS[0].estimatedMinutes * 60);
+    setTimerSeconds(speakingForVariant.estimatedMinutes * 60);
     setIsTimerRunning(true);
     setTestStartTime(Date.now());
     setIsMicCheckModalOpen(true);
   };
 
-  const handleSubmitFullExam = () => {
+  const handleSubmitFullExam = async () => {
     setIsTimerRunning(false);
-    const totalElapsed = Math.max(
-      30,
-      Math.round((Date.now() - (fullExamStartTime || testStartTime)) / 1000),
-    );
+    setIsEvaluatingExam(true);
+    try {
+      const totalElapsed = Math.max(
+        30,
+        Math.round((Date.now() - (fullExamStartTime || testStartTime)) / 1000),
+      );
 
-    const fullAttempt = evaluateFullExamAttempt(
-      activeTest,
-      userAnswersCW,
-      userAnswersMCQ,
-      activeListeningTest,
-      userAnswersListening,
-      activeWritingTest,
-      userSentenceSlots,
-      userEmailText,
-      userDiscussionText,
-      activeSpeakingTest,
-      speakingRepeatTranscripts,
-      speakingInterviewTranscripts,
-      totalElapsed,
-      speakingRepeatAudioUrls,
-      speakingInterviewAudioUrls,
-    );
+      let writingEvals = geminiWritingEvals;
+      if (
+        (!writingEvals.email && userEmailText.trim().length > 0) ||
+        (!writingEvals.discussion && userDiscussionText.trim().length > 0)
+      ) {
+        writingEvals = await evaluateWritingTasksAsync(
+          activeWritingTest,
+          userEmailText,
+          userDiscussionText,
+        );
+      }
 
-    saveAttempt(fullAttempt);
-    refreshStorageData();
-    setActiveAttempt(fullAttempt);
-    setIsFullExamMode(false);
-    setShowSectionTransition(false);
-    setView('report');
+      const fullAttempt = evaluateFullExamAttempt(
+        activeTest,
+        userAnswersCW,
+        userAnswersMCQ,
+        activeListeningTest,
+        userAnswersListening,
+        activeWritingTest,
+        userSentenceSlots,
+        userEmailText,
+        userDiscussionText,
+        activeSpeakingTest,
+        speakingRepeatTranscripts,
+        speakingInterviewTranscripts,
+        totalElapsed,
+        speakingRepeatAudioUrls,
+        speakingInterviewAudioUrls,
+        examVariant,
+        geminiSpeakingEvals,
+        writingEvals,
+      );
+
+      clearSavedSession();
+      saveAttempt(fullAttempt);
+      refreshStorageData();
+      setActiveAttempt(fullAttempt);
+      setIsFullExamMode(false);
+      setShowSectionTransition(false);
+      setView('report');
+    } finally {
+      setIsEvaluatingExam(false);
+    }
   };
 
   // Start a fresh new attempt with different unrepeated information
@@ -551,6 +820,7 @@ export default function App() {
       elapsedSeconds,
     );
 
+    clearSavedSession();
     saveAttempt(calculatedAttempt);
     refreshStorageData();
     setActiveAttempt(calculatedAttempt);
@@ -558,30 +828,43 @@ export default function App() {
   };
 
   // Submit writing test
-  const handleSubmitWritingTest = () => {
+  const handleSubmitWritingTest = async () => {
     if (isFullExamMode) {
       handleCompleteWritingSectionInFullExam();
       return;
     }
 
     setIsTimerRunning(false);
-    const elapsedSeconds = Math.max(
-      15,
-      Math.round((Date.now() - testStartTime) / 1000),
-    );
+    setIsEvaluatingExam(true);
+    try {
+      const elapsedSeconds = Math.max(
+        15,
+        Math.round((Date.now() - testStartTime) / 1000),
+      );
 
-    const calculatedAttempt = evaluateWritingAttempt(
-      activeWritingTest,
-      userSentenceSlots,
-      userEmailText,
-      userDiscussionText,
-      elapsedSeconds,
-    );
+      const evals = await evaluateWritingTasksAsync(
+        activeWritingTest,
+        userEmailText,
+        userDiscussionText,
+      );
 
-    saveAttempt(calculatedAttempt);
-    refreshStorageData();
-    setActiveAttempt(calculatedAttempt);
-    setView('report');
+      const calculatedAttempt = evaluateWritingAttempt(
+        activeWritingTest,
+        userSentenceSlots,
+        userEmailText,
+        userDiscussionText,
+        elapsedSeconds,
+        evals,
+      );
+
+      clearSavedSession();
+      saveAttempt(calculatedAttempt);
+      refreshStorageData();
+      setActiveAttempt(calculatedAttempt);
+      setView('report');
+    } finally {
+      setIsEvaluatingExam(false);
+    }
   };
 
   // Submit speaking test
@@ -604,8 +887,10 @@ export default function App() {
       elapsedSeconds,
       speakingRepeatAudioUrls,
       speakingInterviewAudioUrls,
+      geminiSpeakingEvals,
     );
 
+    clearSavedSession();
     saveAttempt(calculatedAttempt);
     refreshStorageData();
     setActiveAttempt(calculatedAttempt);
@@ -659,6 +944,7 @@ export default function App() {
     );
 
     // Persist to local database
+    clearSavedSession();
     saveAttempt(calculatedAttempt);
     refreshStorageData();
 
@@ -1009,7 +1295,10 @@ export default function App() {
                     • <strong>Parte 1 (Preguntas 1-18):</strong> Choose the Best Response. Escucharás una frase o pregunta hablada con voz real y deberás seleccionar la respuesta conversacionalmente más adecuada. (La pregunta solo se escucha, no aparece escrita).
                   </p>
                   <p>
-                    • <strong>Parte 2 (Preguntas 19-28):</strong> Conversación en campus, anuncio en la sala de estudiantes y conferencia académica sobre restauración psicológica y naturaleza.
+                    • <strong>Parte 2 (Preguntas 19-28):</strong>{' '}
+                    {examVariant === 'B'
+                      ? 'Conversaciones en biblioteca/campus, anuncio académico sobre proyecto grupal y conferencia científica sobre bioluminiscencia marina.'
+                      : 'Conversación en campus, anuncio en la sala de estudiantes y conferencia académica sobre restauración psicológica y naturaleza.'}
                   </p>
                   <p className="text-amber-800 bg-amber-50 rounded-lg p-2.5 font-medium border border-amber-200">
                     ℹ️ <strong>Importante:</strong> Solo escucharás cada audio una sola vez antes de responder a las preguntas correspondientes.
@@ -1122,10 +1411,18 @@ export default function App() {
 
                 <div className="border-t border-gray-100 pt-3 space-y-2 text-xs sm:text-sm text-gray-700">
                   <p>
-                    • <strong>Tarea 1 (Preguntas 1-7):</strong> Listen and Repeat. Escucharás una oración sobre el mapa del zoológico y tendrás estrictamente <strong>10 segundos</strong> para repetirla al sonar el tono.
+                    • <strong>Tarea 1 (Preguntas 1-7):</strong> Listen and Repeat. Escucharás{' '}
+                    {examVariant === 'B'
+                      ? 'instrucciones sobre las salas y exhibiciones del Museo de Ciencias'
+                      : 'oraciones sobre el mapa del zoológico'}{' '}
+                    y tendrás estrictamente <strong>10 segundos</strong> para repetir cada frase al sonar el tono.
                   </p>
                   <p>
-                    • <strong>Tarea 2 (Preguntas 8-11):</strong> Take an Interview. Responderás oralmente a 4 preguntas de la entrevistadora teniendo <strong>45 segundos</strong> para elaborar tu respuesta.
+                    • <strong>Tarea 2 (Preguntas 8-11):</strong> Take an Interview. Responderás oralmente a 4 preguntas{' '}
+                    {examVariant === 'B'
+                      ? 'del entrevistador Dr. David Chen sobre sostenibilidad en el campus'
+                      : 'de la entrevistadora sobre investigación urbana'}{' '}
+                    teniendo <strong>45 segundos</strong> para elaborar cada respuesta.
                   </p>
                   <p className="text-purple-900 bg-purple-50 rounded-lg p-2.5 font-medium border border-purple-200">
                     🎙️ <strong>Grabación de Voz Real:</strong> El micrófono se activará automáticamente con un conteo regresivo de 3 segundos y tono audible de inicio.
@@ -1327,11 +1624,15 @@ export default function App() {
 
     // Speaking Section Mode
     if (testMode === 'speaking') {
+      const isSpeakingVariantB =
+        activeSpeakingTest.id === 'speaking-test-official-2' || examVariant === 'B';
+
       // Screen 0: Speaking Section Intro (matching image_33e325dd.png)
       if (speakingScreenIndex === 0) {
         return (
           <SpeakingIntroView
             type="section_intro"
+            isVariantB={isSpeakingVariantB}
             onNext={() => setSpeakingScreenIndex(1)}
             onOpenMicrophoneCheck={() => setIsMicCheckModalOpen(true)}
           />
@@ -1343,6 +1644,7 @@ export default function App() {
         return (
           <SpeakingIntroView
             type="repeat_intro"
+            isVariantB={isSpeakingVariantB}
             onNext={() => setSpeakingScreenIndex(2)}
           />
         );
@@ -1360,7 +1662,7 @@ export default function App() {
             questionIndex={repeatIdx}
             totalRepeatQuestions={7}
             volume={audioVolume}
-            onFinishResponse={(t: string, _audioBlob?: Blob, audioUrl?: string) => {
+            onFinishResponse={(t: string, _audioBlob?: Blob, audioUrl?: string, aiEval?: GeminiSpeakingEvaluation) => {
               setSpeakingRepeatTranscripts((prev) => ({
                 ...prev,
                 [q.id]: t,
@@ -1369,6 +1671,12 @@ export default function App() {
                 setSpeakingRepeatAudioUrls((prev) => ({
                   ...prev,
                   [q.id]: audioUrl,
+                }));
+              }
+              if (aiEval) {
+                setGeminiSpeakingEvals((prev) => ({
+                  ...prev,
+                  [q.id]: aiEval,
                 }));
               }
             }}
@@ -1389,6 +1697,7 @@ export default function App() {
         return (
           <SpeakingIntroView
             type="interview_task_intro"
+            isVariantB={isSpeakingVariantB}
             onNext={() => setSpeakingScreenIndex(10)}
           />
         );
@@ -1399,6 +1708,7 @@ export default function App() {
         return (
           <SpeakingIntroView
             type="interview_scenario_intro"
+            isVariantB={isSpeakingVariantB}
             onNext={() => setSpeakingScreenIndex(11)}
           />
         );
@@ -1416,7 +1726,7 @@ export default function App() {
           questionIndex={interviewIdx}
           totalInterviewQuestions={4}
           volume={audioVolume}
-          onFinishResponse={(t: string, _audioBlob?: Blob, audioUrl?: string) => {
+          onFinishResponse={(t: string, _audioBlob?: Blob, audioUrl?: string, aiEval?: GeminiSpeakingEvaluation) => {
             setSpeakingInterviewTranscripts((prev) => ({
               ...prev,
               [q.id]: t,
@@ -1425,6 +1735,12 @@ export default function App() {
               setSpeakingInterviewAudioUrls((prev) => ({
                 ...prev,
                 [q.id]: audioUrl,
+              }));
+            }
+            if (aiEval) {
+              setGeminiSpeakingEvals((prev) => ({
+                ...prev,
+                [q.id]: aiEval,
               }));
             }
           }}
@@ -1495,11 +1811,25 @@ export default function App() {
               </tbody>
             </table>
 
-            <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-4 text-xs text-teal-900 mb-8">
-              <strong>Instrucción para el alumno:</strong> Haz clic en el botón <em>Next &gt;</em> en la esquina superior derecha de la barra para iniciar el examen cronometrado.
+            <div className="rounded-lg border border-teal-200 bg-teal-50/60 p-4 text-xs text-teal-900 mb-8 space-y-1.5">
+              <p>
+                <strong>Instrucción para el alumno:</strong> Haz clic en <em>Comenzar Sección de Lectura &gt;</em> o en <em>Next &gt;</em> en la barra superior para iniciar el examen cronometrado.
+              </p>
+              {isFullExamMode && (
+                <p className="text-teal-800">
+                  <strong>Flujo completo ({examVariant === 'B' ? 'Opción B: Prueba Nueva' : 'Opción A: Prueba del TOEFL'}):</strong> Reading (20q) ➔ Listening (28q) ➔ Writing (12 tareas) ➔ Speaking (11q). Tu progreso se guarda automáticamente ante cualquier interrupción.
+                </p>
+              )}
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setIsMicCheckModalOpen(true)}
+                className="rounded-full border border-teal-300 bg-teal-50 px-5 py-2.5 text-xs font-bold text-[#0f6b64] hover:bg-teal-100 transition"
+              >
+                🎙️ Verificar Micrófono y Audio
+              </button>
               <button
                 onClick={() => setCurrentScreenIndex(1)}
                 className="rounded-full bg-[#0f6b64] px-6 py-2.5 text-xs font-bold text-white shadow-md hover:bg-[#0c5650] transition"
@@ -1613,52 +1943,24 @@ export default function App() {
                 ETS
               </span>
               <span className="text-sm font-bold uppercase tracking-wider text-white">
-                TOEFL iBT® Official Practice &amp; Analytics
+                TOEFL iBT® Simulator • Formato Oficial 2026
               </span>
             </div>
 
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsMicCheckModalOpen(true)}
+                className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm bg-teal-800 text-white hover:bg-teal-700 flex items-center gap-1.5"
+                title="Verificar micrófono y volumen antes del examen"
+              >
+                🎙️ Prueba de Audio y Micrófono
+              </button>
               <button
                 onClick={() => setIsPdfModalOpen(true)}
                 className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm bg-indigo-800 text-white hover:bg-indigo-700 flex items-center gap-1.5"
                 title="Abrir PDF Oficial ETS Practice Test 1 (35 páginas)"
               >
                 📄 PDF Oficial ETS
-              </button>
-              <button
-                onClick={() => handleStartWritingTest(OFFICIAL_WRITING_TESTS[0])}
-                className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm bg-orange-700 text-white hover:bg-orange-600"
-                title="Iniciar Sección Writing: Build a Sentence, Email & Academic Discussion"
-              >
-                ✍️ Writing &gt;
-              </button>
-              <button
-                onClick={() => handleStartSpeakingTest(OFFICIAL_SPEAKING_TESTS[0])}
-                className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm bg-amber-700 text-white hover:bg-amber-600"
-                title="Iniciar Sección Speaking: Listen & Repeat (10s) y Take an Interview (45s)"
-              >
-                🗣️ Speaking &gt;
-              </button>
-              <button
-                onClick={() => handleStartListeningTest(OFFICIAL_LISTENING_TESTS[1])}
-                className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm bg-teal-800 text-white hover:bg-teal-700"
-                title="Iniciar Parte 2: Conversaciones, Anuncio y Conferencia Académica (10 preguntas)"
-              >
-                🎧 Listening &gt;
-              </button>
-              <button
-                onClick={() => setDashboardTab('catalog')}
-                className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm bg-[#0c5650] text-white hover:bg-[#093f3b]"
-                title="Ver catálogo completo de todas las secciones"
-              >
-                📋 Catálogo &gt;
-              </button>
-              <button
-                onClick={handleStartDynamicNewTest}
-                className="toefl-btn text-xs font-bold py-1.5 px-3 shadow-sm"
-                title="Iniciar prueba de lectura con textos diferentes"
-              >
-                🎲 Lectura &gt;
               </button>
             </div>
           </header>
@@ -1671,6 +1973,10 @@ export default function App() {
             availableWritingTests={OFFICIAL_WRITING_TESTS}
             availableSpeakingTests={OFFICIAL_SPEAKING_TESTS}
             initialTab={dashboardTab}
+            savedSession={savedSession}
+            onResumeSavedSession={handleResumeSavedSession}
+            onDiscardSavedSession={clearSavedSession}
+            onStartFullExam={handleStartFullExam}
             onStartTest={handleStartTest}
             onStartListeningTest={handleStartListeningTest}
             onStartWritingTest={handleStartWritingTest}
@@ -1711,13 +2017,14 @@ export default function App() {
             }
             questionIndicator={getQuestionIndicator()}
             isFirstScreen={
-              testMode === 'listening'
+              (isFullExamMode && showSectionTransition) ||
+              (testMode === 'listening'
                 ? listeningScreenIndex === 0
                 : testMode === 'writing'
                 ? writingScreenIndex === 0
                 : testMode === 'speaking'
                 ? speakingScreenIndex === 0
-                : currentScreenIndex === 0
+                : currentScreenIndex === 0)
             }
             isLastScreen={
               testMode === 'listening'
@@ -1729,6 +2036,7 @@ export default function App() {
                 : currentScreenIndex === totalScreens - 1
             }
             onBack={() => {
+              if (isFullExamMode && showSectionTransition) return;
               if (testMode === 'listening') {
                 if (listeningScreenIndex > 0) {
                   setListeningScreenIndex(listeningScreenIndex - 1);
@@ -1879,6 +2187,9 @@ export default function App() {
                     onClick={() => {
                       setShowExitConfirm(false);
                       setIsTimerRunning(false);
+                      clearSavedSession();
+                      setIsFullExamMode(false);
+                      setShowSectionTransition(false);
                       setView('dashboard');
                     }}
                     className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100"
@@ -1895,6 +2206,21 @@ export default function App() {
                     Finalizar y Guardar
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Evaluating Modal */}
+          {isEvaluatingExam && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-xs p-4">
+              <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-center space-y-3">
+                <div className="mx-auto h-10 w-10 rounded-full border-4 border-[#0f6b64] border-t-transparent animate-spin" />
+                <h3 className="text-base font-extrabold text-gray-900">
+                  Evaluando tus respuestas con rúbrica ETS 2026...
+                </h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Calculando banda oficial 1.0 – 6.0, equivalencia orientativa 0 – 120 y retroalimentación detallada de Writing y Speaking.
+                </p>
               </div>
             </div>
           )}
@@ -1944,7 +2270,11 @@ export default function App() {
                   }
                 }}
                 onRetake={() => {
-                  if (activeAttempt.testType === 'writing') {
+                  if (activeAttempt.testType === 'full') {
+                    handleStartFullExam(
+                      activeAttempt.testId === 'toefl_ibt_full_simulation_b' ? 'B' : 'A',
+                    );
+                  } else if (activeAttempt.testType === 'writing') {
                     const wt =
                       OFFICIAL_WRITING_TESTS.find((t) => t.id === activeAttempt.testId) ||
                       OFFICIAL_WRITING_TESTS[0];

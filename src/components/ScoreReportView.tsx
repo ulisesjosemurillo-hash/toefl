@@ -95,6 +95,29 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
     }
   };
 
+  // Compute ETS 2026 Band fallback for historical attempts without explicit field
+  const fallbackBandFromScaled = (val: number, maxVal: number) => {
+    const pct = Math.max(0, Math.min(1, val / maxVal));
+    const raw = 1 + pct * 5;
+    return Math.round(raw * 2) / 2;
+  };
+  const globalBand2026 =
+    attempt.etsBandScore2026 ??
+    fallbackBandFromScaled(attempt.scaledScore, isFullExam ? 120 : 30);
+
+  const sectionCounts = {
+    reading: attempt.questionResults.filter((q) =>
+      ['complete_words', 'daily_life', 'academic'].includes(q.section),
+    ).length,
+    listening: attempt.questionResults.filter((q) => q.section === 'listening').length,
+    writing: attempt.questionResults.filter((q) =>
+      ['writing_sentence', 'writing_email', 'writing_discussion'].includes(q.section),
+    ).length,
+    speaking: attempt.questionResults.filter((q) =>
+      ['speaking_repeat', 'speaking_interview'].includes(q.section),
+    ).length,
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-gray-100 py-8 px-4 sm:px-8">
       <div className="mx-auto max-w-4xl space-y-6">
@@ -103,7 +126,7 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
           <div className="flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="space-y-2 text-center md:text-left">
               <span className="inline-block rounded-full bg-teal-800/80 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-teal-200">
-                Informe Oficial de Resultados • Guardado en Base de Datos Local
+                Estimación Diagnóstica de Práctica (Formato ETS 2026) • Guardado Localmente
               </span>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
                 {attempt.testTitle}
@@ -115,25 +138,34 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                 <span>•</span>
                 <span>{new Date(attempt.timestamp).toLocaleDateString()}</span>
               </p>
+              <p className="text-[11px] text-teal-200/90 max-w-xl">
+                Nota: Los puntajes mostrados corresponden a una estimación diagnóstica de práctica basada en la rúbrica oficial ETS (escala 1.0 – 6.0 vigente desde el 21 de enero de 2026) y no constituyen un certificado oficial de ETS.
+              </p>
             </div>
 
-            {/* Large Scaled Score Dial */}
-            <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-5 text-gray-900 shadow-lg min-w-[210px]">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                {isFullExam ? 'Puntaje Total TOEFL iBT®' : 'Puntaje Scaled (0-30)'}
+            {/* Large ETS 2026 Band & Orientative 0-120 Score Dial */}
+            <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-5 text-gray-900 shadow-lg min-w-[235px]">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#0f6b64]">
+                Banda Oficial ETS 2026 (1.0 – 6.0)
               </span>
               <div className="my-1 flex items-baseline gap-1">
                 <span className="text-5xl font-black text-[#0f6b64]">
-                  {attempt.scaledScore}
+                  {globalBand2026.toFixed(1)}
                 </span>
                 <span className="text-xl font-bold text-gray-400">
-                  {isFullExam ? '/ 120' : '/ 30'}
+                  / 6.0
+                </span>
+              </div>
+              <div className="text-xs font-bold text-gray-700 mb-1">
+                Equivalencia orientativa:{' '}
+                <span className="text-[#0f6b64] font-black">
+                  {attempt.scaledScore} {isFullExam ? '/ 120' : '/ 30'}
                 </span>
               </div>
               <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
-                <Award size={13} /> {attempt.cefrLevel} • {attempt.percentage}% Acumulado
+                <Award size={13} /> {attempt.cefrLevel} • {attempt.percentage}%
               </div>
-              <span className="mt-2 text-[11px] text-center font-medium text-gray-500 max-w-[190px]">
+              <span className="mt-2 text-[11px] text-center font-medium text-gray-500 max-w-[205px]">
                 {attempt.proficiencyDescriptor}
               </span>
             </div>
@@ -178,15 +210,15 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Sección 1</span>
-                    <span className="text-xs font-bold text-[#0f6b64]">
-                      {attempt.breakdown.fullExam?.readingScaled ?? 0} / 30
+                    <span className="text-xs font-black text-[#0f6b64]">
+                      {(attempt.etsBandBreakdown2026?.reading ?? fallbackBandFromScaled(attempt.breakdown.fullExam?.readingScaled ?? 0, 30)).toFixed(1)} / 6.0
                     </span>
                   </div>
                   <h3 className="font-extrabold text-base text-gray-900 mb-1 flex items-center gap-1.5">
                     📖 Reading
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">
-                    20 preguntas • Complete Words, Notice &amp; Academic Passage
+                    {sectionCounts.reading || 20} preguntas • Equiv. {attempt.breakdown.fullExam?.readingScaled ?? 0} / 30
                   </p>
                 </div>
                 <div>
@@ -207,15 +239,15 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Sección 2</span>
-                    <span className="text-xs font-bold text-[#0f6b64]">
-                      {attempt.breakdown.fullExam?.listeningScaled ?? 0} / 30
+                    <span className="text-xs font-black text-[#0f6b64]">
+                      {(attempt.etsBandBreakdown2026?.listening ?? fallbackBandFromScaled(attempt.breakdown.fullExam?.listeningScaled ?? 0, 30)).toFixed(1)} / 6.0
                     </span>
                   </div>
                   <h3 className="font-extrabold text-base text-gray-900 mb-1 flex items-center gap-1.5">
                     🎧 Listening
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">
-                    28 preguntas • 18 Best Responses + 3 Charlas/Conversaciones
+                    {sectionCounts.listening || 28} preguntas • Equiv. {attempt.breakdown.fullExam?.listeningScaled ?? 0} / 30
                   </p>
                 </div>
                 <div>
@@ -236,15 +268,15 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Sección 3</span>
-                    <span className="text-xs font-bold text-[#0f6b64]">
-                      {attempt.breakdown.fullExam?.writingScaled ?? 0} / 30
+                    <span className="text-xs font-black text-[#0f6b64]">
+                      {(attempt.etsBandBreakdown2026?.writing ?? fallbackBandFromScaled(attempt.breakdown.fullExam?.writingScaled ?? 0, 30)).toFixed(1)} / 6.0
                     </span>
                   </div>
                   <h3 className="font-extrabold text-base text-gray-900 mb-1 flex items-center gap-1.5">
                     ✍️ Writing
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">
-                    12 tareas • 10 Sentences, Email (7m) &amp; Discussion (10m)
+                    {sectionCounts.writing || 12} tareas • Equiv. {attempt.breakdown.fullExam?.writingScaled ?? 0} / 30
                   </p>
                 </div>
                 <div>
@@ -265,15 +297,15 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Sección 4</span>
-                    <span className="text-xs font-bold text-[#0f6b64]">
-                      {attempt.breakdown.fullExam?.speakingScaled ?? 0} / 30
+                    <span className="text-xs font-black text-[#0f6b64]">
+                      {(attempt.etsBandBreakdown2026?.speaking ?? fallbackBandFromScaled(attempt.breakdown.fullExam?.speakingScaled ?? 0, 30)).toFixed(1)} / 6.0
                     </span>
                   </div>
                   <h3 className="font-extrabold text-base text-gray-900 mb-1 flex items-center gap-1.5">
                     🗣️ Speaking
                   </h3>
                   <p className="text-xs text-gray-500 mb-3">
-                    11 preguntas • 7 Repeat (10s) + 4 Interview (45s) con Mic
+                    {sectionCounts.speaking || 11} preguntas • Equiv. {attempt.breakdown.fullExam?.speakingScaled ?? 0} / 30
                   </p>
                 </div>
                 <div>
@@ -289,6 +321,43 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Detailed AI Rubric Feedback Summary if available */}
+            {attempt.aiDetailedEvaluations &&
+              (attempt.aiDetailedEvaluations.writingEmail ||
+                attempt.aiDetailedEvaluations.writingDiscussion ||
+                Object.keys(attempt.aiDetailedEvaluations.speakingItems || {}).length > 0) && (
+                <div className="rounded-xl border border-indigo-200 bg-white p-5 shadow-xs space-y-3">
+                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-sm">
+                    <Sparkles size={16} className="text-indigo-600" />
+                    <span>Evaluación por Rúbrica IA (Writing &amp; Speaking)</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    {attempt.aiDetailedEvaluations.writingEmail && (
+                      <div className="rounded-lg border border-orange-200 bg-orange-50/50 p-3 space-y-1">
+                        <div className="font-bold text-orange-950 flex justify-between">
+                          <span>Write an Email</span>
+                          <span>{attempt.aiDetailedEvaluations.writingEmail.overallScore.toFixed(1)} / 5.0</span>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed">
+                          {attempt.aiDetailedEvaluations.writingEmail.feedback}
+                        </p>
+                      </div>
+                    )}
+                    {attempt.aiDetailedEvaluations.writingDiscussion && (
+                      <div className="rounded-lg border border-teal-200 bg-teal-50/50 p-3 space-y-1">
+                        <div className="font-bold text-teal-950 flex justify-between">
+                          <span>Academic Discussion</span>
+                          <span>{attempt.aiDetailedEvaluations.writingDiscussion.overallScore.toFixed(1)} / 5.0</span>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed">
+                          {attempt.aiDetailedEvaluations.writingDiscussion.feedback}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
           </div>
         ) : attempt.testType === 'writing' || attempt.breakdown.buildSentence ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -358,7 +427,11 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                   {attempt.breakdown.speakingRepeat?.score ?? 0} / {attempt.breakdown.speakingRepeat?.total ?? 7}
                 </span>
               </div>
-              <h3 className="font-bold text-sm text-gray-900 mb-2">Listen and Repeat (Zoológico)</h3>
+              <h3 className="font-bold text-sm text-gray-900 mb-2">
+                {attempt.testId === 'speaking-test-official-2'
+                  ? 'Listen and Repeat (Museo de Ciencias)'
+                  : 'Listen and Repeat (Zoológico)'}
+              </h3>
               <div className="w-full bg-gray-200 h-2.5 rounded-full overflow-hidden mb-2">
                 <div
                   className="bg-[#0f6b64] h-2.5 rounded-full transition-all duration-500"
@@ -377,7 +450,11 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                   {attempt.breakdown.speakingInterview?.score ?? 0} / {attempt.breakdown.speakingInterview?.total ?? 12}
                 </span>
               </div>
-              <h3 className="font-bold text-sm text-gray-900 mb-2">Take an Interview (Investigación Urbana)</h3>
+              <h3 className="font-bold text-sm text-gray-900 mb-2">
+                {attempt.testId === 'speaking-test-official-2'
+                  ? 'Take an Interview (Sostenibilidad en Campus)'
+                  : 'Take an Interview (Investigación Urbana)'}
+              </h3>
               <div className="w-full bg-gray-200 h-2.5 rounded-full overflow-hidden mb-2">
                 <div
                   className="bg-emerald-600 h-2.5 rounded-full transition-all duration-500"
@@ -655,7 +732,7 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                📖 Reading (20)
+                📖 Reading ({sectionCounts.reading})
               </button>
               <button
                 onClick={() => setSectionFilter('listening')}
@@ -665,7 +742,7 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                🎧 Listening (28)
+                🎧 Listening ({sectionCounts.listening})
               </button>
               <button
                 onClick={() => setSectionFilter('writing')}
@@ -675,7 +752,7 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                ✍️ Writing (12)
+                ✍️ Writing ({sectionCounts.writing})
               </button>
               <button
                 onClick={() => setSectionFilter('speaking')}
@@ -685,7 +762,7 @@ export const ScoreReportView: React.FC<ScoreReportViewProps> = ({
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                🗣️ Speaking (11)
+                🗣️ Speaking ({sectionCounts.speaking})
               </button>
             </div>
           )}

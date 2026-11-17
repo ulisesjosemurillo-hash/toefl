@@ -10,12 +10,14 @@ interface SpeakingIntroViewProps {
   type: 'section_intro' | 'repeat_intro' | 'interview_task_intro' | 'interview_scenario_intro';
   onNext: () => void;
   onOpenMicrophoneCheck?: () => void;
+  isVariantB?: boolean;
 }
 
 export const SpeakingIntroView: React.FC<SpeakingIntroViewProps> = ({
   type,
   onNext,
   onOpenMicrophoneCheck,
+  isVariantB = false,
 }) => {
   // Screen 1: Speaking Section Main Intro (image_33e325dd.png)
   if (type === 'section_intro') {
@@ -186,21 +188,22 @@ export const SpeakingIntroView: React.FC<SpeakingIntroViewProps> = ({
     );
   }
 
-  // Screen 4: Interview Scenario Intro (image_d58b64ef.png)
+  // Screen 4: Interview Scenario Intro (image_d58b64ef.png or Test B researcher)
   return (
     <div className="flex-1 overflow-y-auto bg-white p-6 sm:p-10 flex flex-col justify-between min-h-0 select-none">
       <div className="mx-auto max-w-4xl w-full text-center space-y-6 pt-2">
         <h2 className="text-xl sm:text-2xl font-bold text-gray-900 leading-snug max-w-3xl mx-auto">
-          You have agreed to take part in a research study about urban life. You will have a short
-          online interview with a researcher. The researcher will ask you some questions.
+          {isVariantB
+            ? 'You have agreed to take part in a university research study about campus sustainability and student life. You will have a short online interview with Dr. David Chen, who will ask you four questions.'
+            : 'You have agreed to take part in a research study about urban life. You will have a short online interview with a researcher. The researcher will ask you some questions.'}
         </h2>
 
         {/* Researcher Video / Portrait Photo */}
         <div className="flex justify-center pt-2">
           <div className="relative overflow-hidden rounded-2xl border-2 border-gray-300 shadow-md max-w-md w-full">
             <img
-              src="/assets/aistudio/image_d58b64ef.png"
-              alt="Researcher Dr. Sarah Adams"
+              src={isVariantB ? '/assets/aistudio/speaker_man_glasses.png' : '/assets/aistudio/image_d58b64ef.png'}
+              alt={isVariantB ? 'Researcher Dr. David Chen' : 'Researcher Dr. Sarah Adams'}
               className="w-full h-auto object-cover"
             />
           </div>

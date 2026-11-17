@@ -12,6 +12,10 @@ import {
   WritingTest,
   SpeakingTest,
 } from '../types/toefl.ts';
+import {
+  GeminiSpeakingEvaluation,
+  GeminiWritingEvaluation,
+} from './audioRecording.ts';
 
 export const SKILL_LABELS: Record<ReadingSkillType, string> = {
   complete_words: 'Completar Palabras (Morfología & Vocabulario)',
@@ -41,6 +45,31 @@ export function calculateScaledScore(rawScore: number, maxScore: number): number
   if (ratio >= 0.2) return 6;
   if (ratio > 0) return 3;
   return 0;
+}
+
+// Official ETS 2026 Band Score conversion (1.0 to 6.0 in 0.5 increments)
+export function scaled30ToEtsBand2026(scaled30: number): number {
+  if (scaled30 >= 29) return 6.0;
+  if (scaled30 >= 27) return 5.5;
+  if (scaled30 >= 24) return 5.0;
+  if (scaled30 >= 21) return 4.5;
+  if (scaled30 >= 18) return 4.0;
+  if (scaled30 >= 15) return 3.5;
+  if (scaled30 >= 12) return 3.0;
+  if (scaled30 >= 9) return 2.5;
+  if (scaled30 >= 6) return 2.0;
+  if (scaled30 >= 3) return 1.5;
+  return 1.0;
+}
+
+export function total120ToEtsBand2026(
+  readingBand: number,
+  listeningBand: number,
+  writingBand: number,
+  speakingBand: number,
+): number {
+  const avg = (readingBand + listeningBand + writingBand + speakingBand) / 4;
+  return Math.round(avg * 2) / 2;
 }
 
 export function getCefrDetails(scaledScore: number): {
@@ -334,6 +363,7 @@ export function evaluateAttempt(
     percentage,
     cefrLevel: level,
     proficiencyDescriptor: descriptor,
+    etsBandScore2026: scaled30ToEtsBand2026(scaledScore),
     breakdown: {
       completeWords: {
         score: cwScore,
@@ -428,6 +458,7 @@ export function evaluateListeningAttempt(
     percentage,
     cefrLevel: level,
     proficiencyDescriptor: descriptor,
+    etsBandScore2026: scaled30ToEtsBand2026(scaledScore),
     testType: 'listening',
     breakdown: {
       listening: {
@@ -451,11 +482,15 @@ export function evaluateListeningAttempt(
 }
 
 export function evaluateWritingAttempt(
-  test: import('../types/toefl.ts').WritingTest,
+  test: WritingTest,
   sentenceAnswers: Record<string, string[]>,
   emailText: string,
   discussionText: string,
   durationSeconds: number,
+  geminiWritingEvals: {
+    email?: GeminiWritingEvaluation;
+    discussion?: GeminiWritingEvaluation;
+  } = {},
 ): TestAttempt {
   const questionResults: QuestionResultItem[] = [];
   let sentenceScore = 0;
@@ -505,11 +540,40 @@ export function evaluateWritingAttempt(
   // 2. Evaluate Email Task (Rubric 0 - 5 points)
   const emailWords = (emailText || '').trim().split(/\s+/).filter(Boolean);
   const emailWordCount = emailWords.length;
-  let emailScore = 1;
-  if (emailWordCount >= 70) emailScore = 5;
-  else if (emailWordCount >= 50) emailScore = 4;
-  else if (emailWordCount >= 30) emailScore = 3;
-  else if (emailWordCount >= 10) emailScore = 2;
+  const aiEmail = geminiWritingEvals.email;
+
+  let emailScore = 0;
+  if (aiEmail && aiEmail.status === 'evaluated' && aiEmail.overallScore > 0) {
+    emailScore = Math.max(1, Math.min(5, Math.round((aiEmail.overallScore / 6) * 5)));
+  } else if (emailWordCount < 5 || aiEmail?.status === 'insufficient') {
+    emailScore = 0;
+  } else if (emailWordCount >= 70) {
+    emailScore = 5;
+  } else if (emailWordCount >= 50) {
+    emailScore = 4;
+  } else if (emailWordCount >= 30) {
+    emailScore = 3;
+  } else if (emailWordCount >= 10) {
+    emailScore = 2;
+  } else {
+    emailScore = 1;
+  }
+
+  const emailExplanationParts = [
+    `Tu email contiene ${emailWordCount} palabras.`,
+    aiEmail?.feedback
+      ? `Evaluación IA (Banda Est. ${aiEmail.overallScore.toFixed(1)}/6.0): ${aiEmail.feedback}`
+      : 'Para un puntaje óptimo (Band 4-5), aborda los 3 requerimientos del escenario con saludo y despedida formal.',
+  ];
+  if (aiEmail?.grammarErrors && aiEmail.grammarErrors.length > 0) {
+    emailExplanationParts.push(
+      'Correcciones: ' +
+        aiEmail.grammarErrors
+          .slice(0, 3)
+          .map((e) => `"${e.mistake}" ➔ "${e.correction}"`)
+          .join(' | '),
+    );
+  }
 
   questionResults.push({
     questionId: test.emailTask.id,
@@ -517,23 +581,52 @@ export function evaluateWritingAttempt(
     section: 'writing_email',
     sectionLabel: 'Writing • Write an Email (7 min)',
     prompt: test.emailTask.title,
-    userAnswerText: emailText || '(Sin respuesta escrita)',
+    userAnswerText: emailText?.trim() ? emailText : '(Sin respuesta escrita)',
     correctAnswerText: test.emailTask.sampleModelAnswer || '',
     isCorrect: emailScore >= 4,
     skill: 'email_communicative_intent',
     skillLabel: 'Comunicación Escrita & Cumplimiento de Puntos',
-    explanation: `Tu email contiene ${emailWordCount} palabras. Para un puntaje óptimo (Band 4-5), debes abordar los 3 puntos (gusto por la revista, problema técnico y estado de la entrega) con oraciones completas y saludo/despedida formal.`,
+    explanation: emailExplanationParts.join(' '),
     wordCount: emailWordCount,
   });
 
   // 3. Evaluate Academic Discussion Task (Rubric 0 - 5 points)
   const discWords = (discussionText || '').trim().split(/\s+/).filter(Boolean);
   const discWordCount = discWords.length;
-  let discScore = 1;
-  if (discWordCount >= 110) discScore = 5;
-  else if (discWordCount >= 100) discScore = 4;
-  else if (discWordCount >= 70) discScore = 3;
-  else if (discWordCount >= 30) discScore = 2;
+  const aiDisc = geminiWritingEvals.discussion;
+
+  let discScore = 0;
+  if (aiDisc && aiDisc.status === 'evaluated' && aiDisc.overallScore > 0) {
+    discScore = Math.max(1, Math.min(5, Math.round((aiDisc.overallScore / 6) * 5)));
+  } else if (discWordCount < 5 || aiDisc?.status === 'insufficient') {
+    discScore = 0;
+  } else if (discWordCount >= 110) {
+    discScore = 5;
+  } else if (discWordCount >= 100) {
+    discScore = 4;
+  } else if (discWordCount >= 70) {
+    discScore = 3;
+  } else if (discWordCount >= 30) {
+    discScore = 2;
+  } else {
+    discScore = 1;
+  }
+
+  const discExplanationParts = [
+    `Tu publicación contiene ${discWordCount} palabras (mínimo recomendado: 100).`,
+    aiDisc?.feedback
+      ? `Evaluación IA (Banda Est. ${aiDisc.overallScore.toFixed(1)}/6.0): ${aiDisc.feedback}`
+      : 'En TOEFL iBT Academic Discussion, expresa una postura clara, apóyala con argumentos propios y dialoga con las ideas de tus compañeros.',
+  ];
+  if (aiDisc?.grammarErrors && aiDisc.grammarErrors.length > 0) {
+    discExplanationParts.push(
+      'Correcciones: ' +
+        aiDisc.grammarErrors
+          .slice(0, 3)
+          .map((e) => `"${e.mistake}" ➔ "${e.correction}"`)
+          .join(' | '),
+    );
+  }
 
   questionResults.push({
     questionId: test.academicDiscussionTask.id,
@@ -541,12 +634,12 @@ export function evaluateWritingAttempt(
     section: 'writing_discussion',
     sectionLabel: 'Writing • Academic Discussion (10 min)',
     prompt: test.academicDiscussionTask.title,
-    userAnswerText: discussionText || '(Sin respuesta escrita)',
+    userAnswerText: discussionText?.trim() ? discussionText : '(Sin respuesta escrita)',
     correctAnswerText: test.academicDiscussionTask.sampleModelAnswer || '',
     isCorrect: discScore >= 4,
     skill: 'academic_discussion_argumentation',
     skillLabel: 'Argumentación Académica & Cohesión',
-    explanation: `Tu publicación contiene ${discWordCount} palabras (mínimo recomendado: 100). En TOEFL iBT Academic Discussion, debes expresar una postura clara, apoyar tu punto con argumentos propios y referenciar o contrastar las opiniones de tus compañeros.`,
+    explanation: discExplanationParts.join(' '),
     wordCount: discWordCount,
   });
 
@@ -567,12 +660,20 @@ export function evaluateWritingAttempt(
     recommendations.push('Repasa la estructura de preguntas indirectas ("Do you know if + S + V" sin invertir sujeto y verbo).');
   }
 
+  if (aiEmail?.strengths?.length) strengths.push(...aiEmail.strengths.slice(0, 2));
+  if (aiDisc?.strengths?.length) strengths.push(...aiDisc.strengths.slice(0, 2));
+  if (aiEmail?.weaknesses?.length) weaknesses.push(...aiEmail.weaknesses.slice(0, 2));
+  if (aiDisc?.weaknesses?.length) weaknesses.push(...aiDisc.weaknesses.slice(0, 2));
+
   if (discWordCount >= 100) {
     strengths.push('Desarrollo amplio de ideas superando el umbral de 100 palabras en la discusión académica.');
   } else {
     weaknesses.push('Longitud insuficiente en la discusión académica (menos de 100 palabras).');
     recommendations.push('Practica escribir al menos 2 párrafos concisos con conectores (Furthermore, However, Instead of).');
   }
+
+  if (aiEmail?.recommendations?.length) recommendations.push(...aiEmail.recommendations.slice(0, 2));
+  if (aiDisc?.recommendations?.length) recommendations.push(...aiDisc.recommendations.slice(0, 2));
 
   return {
     id: `writing_attempt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -586,7 +687,10 @@ export function evaluateWritingAttempt(
     percentage,
     cefrLevel: level,
     proficiencyDescriptor: descriptor,
+    etsBandScore2026: scaled30ToEtsBand2026(scaledScore),
     testType: 'writing',
+    aiDetailedEvaluations:
+      aiEmail || aiDisc ? { writing: geminiWritingEvals } : undefined,
     breakdown: {
       buildSentence: {
         score: sentenceScore,
@@ -623,37 +727,61 @@ export function evaluateWritingAttempt(
         name: 'Discusión Académica: Argumentación y Cohesión',
       },
     },
-    strengths,
-    weaknesses,
-    recommendations,
+    strengths: Array.from(new Set(strengths)),
+    weaknesses: Array.from(new Set(weaknesses)),
+    recommendations: Array.from(new Set(recommendations)),
     questionResults,
   };
 }
 
 export function evaluateSpeakingAttempt(
-  test: import('../types/toefl.ts').SpeakingTest,
+  test: SpeakingTest,
   repeatTranscripts: Record<string, string>,
   interviewTranscripts: Record<string, string>,
   durationSeconds: number,
   repeatAudioUrls: Record<string, string> = {},
   interviewAudioUrls: Record<string, string> = {},
+  geminiSpeakingEvals: Record<string, GeminiSpeakingEvaluation> = {},
 ): TestAttempt {
   const questionResults: QuestionResultItem[] = [];
-  let repeatScore = 0;
+  let repeatScoreSum = 0;
   let interviewScore = 0;
+  const aiStrengths: string[] = [];
+  const aiWeaknesses: string[] = [];
+  const aiRecommendations: string[] = [];
 
   // 1. Evaluate 7 Listen and Repeat questions (10s timer)
   test.repeatQuestions.forEach((q) => {
-    const userSpeech = (repeatTranscripts[q.id] || '').trim();
-    const isAnswered = userSpeech.length > 5;
-    // Word overlap ratio with target sentence
-    const targetWords = q.spokenSentence.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/);
-    const userWords = userSpeech.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/);
-    const matches = targetWords.filter((tw) => userWords.includes(tw)).length;
-    const matchRatio = targetWords.length > 0 ? matches / targetWords.length : 0;
+    const aiEval = geminiSpeakingEvals[q.id];
+    const rawTranscript = (aiEval?.transcript || repeatTranscripts[q.id] || '').trim();
+    let isCorrect = false;
+    let explanationText = q.explanation;
+    let displayUserAnswer = rawTranscript || '(Sin respuesta oral detectada - No evaluado)';
 
-    const isCorrect = matchRatio >= 0.5 || isAnswered;
-    if (isCorrect) repeatScore += 1;
+    if (aiEval) {
+      if (!aiEval.evaluated || aiEval.overallScore <= 0) {
+        isCorrect = false;
+        explanationText = `No evaluado: ${aiEval.feedback}`;
+        displayUserAnswer = rawTranscript || '(Sin voz comprensible detectada)';
+      } else {
+        const fraction = Math.max(0, Math.min(1, aiEval.overallScore / 6));
+        repeatScoreSum += fraction;
+        isCorrect = aiEval.overallScore >= 3.5;
+        explanationText = `Evaluación IA (Banda ${aiEval.overallScore.toFixed(1)}/6.0): ${aiEval.feedback}`;
+        if (aiEval.weaknesses?.length) aiWeaknesses.push(...aiEval.weaknesses);
+        if (aiEval.recommendations?.length) aiRecommendations.push(...aiEval.recommendations);
+      }
+    } else if (rawTranscript.length > 0) {
+      const targetWords = q.spokenSentence.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+      const userWords = rawTranscript.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+      const matches = targetWords.filter((tw) => userWords.includes(tw)).length;
+      const matchRatio = targetWords.length > 0 ? matches / targetWords.length : 0;
+      isCorrect = matchRatio >= 0.6;
+      if (isCorrect) repeatScoreSum += 1;
+      else if (matchRatio >= 0.35) repeatScoreSum += 0.5;
+    } else {
+      explanationText = 'No evaluado: No se registró voz ni transcripción en esta pregunta.';
+    }
 
     questionResults.push({
       questionId: q.id,
@@ -662,27 +790,50 @@ export function evaluateSpeakingAttempt(
       sectionLabel: 'Speaking • Listen and Repeat (10s)',
       prompt: q.spokenSentence,
       promptSpokenTranscript: q.spokenSentence,
-      userAnswerText: userSpeech || '(Audio registrado)',
+      userAnswerText: displayUserAnswer,
       correctAnswerText: q.spokenSentence,
       isCorrect,
       skill: 'listen_and_repeat_pronunciation',
       skillLabel: 'Pronunciación y Precisión Fonética',
-      explanation: q.explanation,
+      explanation: explanationText,
       audioRecordingUrl: repeatAudioUrls[q.id],
     });
   });
 
+  const repeatScore = Math.round(repeatScoreSum);
+
   // 2. Evaluate 4 Interview questions (45s timer)
   test.interviewQuestions.forEach((q) => {
-    const userSpeech = (interviewTranscripts[q.id] || '').trim();
+    const aiEval = geminiSpeakingEvals[q.id];
+    const userSpeech = (aiEval?.transcript || interviewTranscripts[q.id] || '').trim();
     const words = userSpeech.split(/\s+/).filter(Boolean);
     const wordCount = words.length;
 
-    let qScore = 1;
-    if (wordCount >= 50) qScore = 3;
-    else if (wordCount >= 25) qScore = 2;
-    else if (wordCount >= 5) qScore = 1;
-    else qScore = 0;
+    let qScore = 0;
+    let explanationText = q.explanation;
+    let displayUserAnswer = userSpeech || '(Sin respuesta oral detectada - No evaluado)';
+
+    if (aiEval) {
+      if (!aiEval.evaluated || aiEval.overallScore <= 0) {
+        qScore = 0;
+        explanationText = `No evaluado: ${aiEval.feedback}`;
+        displayUserAnswer = userSpeech || '(Sin voz comprensible detectada)';
+      } else {
+        qScore = Math.max(1, Math.min(3, Math.round((aiEval.overallScore / 6) * 3)));
+        explanationText = `Evaluación IA (Banda ${aiEval.overallScore.toFixed(1)}/6.0): ${aiEval.feedback}`;
+        if (aiEval.strengths?.length) aiStrengths.push(...aiEval.strengths);
+        if (aiEval.weaknesses?.length) aiWeaknesses.push(...aiEval.weaknesses);
+        if (aiEval.recommendations?.length) aiRecommendations.push(...aiEval.recommendations);
+      }
+    } else {
+      if (wordCount >= 50) qScore = 3;
+      else if (wordCount >= 25) qScore = 2;
+      else if (wordCount >= 5) qScore = 1;
+      else {
+        qScore = 0;
+        explanationText = 'No evaluado: No se registró voz ni transcripción suficiente en esta entrevista.';
+      }
+    }
 
     interviewScore += qScore;
 
@@ -693,12 +844,12 @@ export function evaluateSpeakingAttempt(
       sectionLabel: `Speaking • Interview: ${q.topic} (45s)`,
       prompt: q.questionSpoken,
       promptSpokenTranscript: q.questionSpoken,
-      userAnswerText: userSpeech || '(Respuesta oral registrada)',
+      userAnswerText: displayUserAnswer,
       correctAnswerText: q.sampleModelAnswer,
-      isCorrect: qScore >= 2,
+      isCorrect: aiEval ? aiEval.evaluated && aiEval.overallScore >= 3.5 : qScore >= 2,
       skill: 'interview_fluency_coherence',
       skillLabel: 'Fluidez y Coherencia en Entrevista',
-      explanation: q.explanation,
+      explanation: explanationText,
       wordCount,
       audioRecordingUrl: interviewAudioUrls[q.id],
     });
@@ -710,22 +861,22 @@ export function evaluateSpeakingAttempt(
   const percentage = Math.round((rawScore / maxScore) * 100);
   const { level, descriptor } = getCefrDetails(scaledScore);
 
-  const strengths: string[] = [];
-  const weaknesses: string[] = [];
-  const recommendations: string[] = [];
+  const strengths: string[] = [...aiStrengths];
+  const weaknesses: string[] = [...aiWeaknesses];
+  const recommendations: string[] = [...aiRecommendations];
 
   if (repeatScore >= 5) {
     strengths.push('Gran precisión auditiva y respuesta inmediata en Listen and Repeat (10 segundos).');
   } else {
-    weaknesses.push('Pérdida de palabras clave o demora al iniciar la repetición oral.');
-    recommendations.push('Recuerda que no hay tiempo de preparación: debes empezar a hablar inmediatamente al sonar el tono.');
+    weaknesses.push('Pérdida de palabras clave o ausencia de respuesta en Listen and Repeat.');
+    recommendations.push('Recuerda que no hay tiempo de preparación: comienza a repetir inmediatamente al sonar el tono.');
   }
 
   if (interviewScore >= 8) {
     strengths.push('Fluidez y desarrollo completo de ideas durante los 45 segundos de entrevista.');
   } else {
-    weaknesses.push('Respuestas breves que dejaron tiempo en blanco antes de los 45 segundos.');
-    recommendations.push('Aprovecha la totalidad de los 45 segundos: estructura tu respuesta con una opinión inicial, dos razones con ejemplos y una conclusión breve.');
+    weaknesses.push('Respuestas breves o sin audio detectado en las preguntas de entrevista.');
+    recommendations.push('Aprovecha los 45 segundos estructurando tu respuesta con opinión inicial, dos razones y ejemplos.');
   }
 
   return {
@@ -740,7 +891,12 @@ export function evaluateSpeakingAttempt(
     percentage,
     cefrLevel: level,
     proficiencyDescriptor: descriptor,
+    etsBandScore2026: scaled30ToEtsBand2026(scaledScore),
     testType: 'speaking',
+    aiDetailedEvaluations:
+      Object.keys(geminiSpeakingEvals).length > 0
+        ? { speaking: geminiSpeakingEvals }
+        : undefined,
     breakdown: {
       speakingRepeat: {
         score: repeatScore,
@@ -765,9 +921,9 @@ export function evaluateSpeakingAttempt(
         name: 'Fluidez y Coherencia en Entrevista',
       },
     },
-    strengths,
-    weaknesses,
-    recommendations,
+    strengths: Array.from(new Set(strengths)).slice(0, 4),
+    weaknesses: Array.from(new Set(weaknesses)).slice(0, 4),
+    recommendations: Array.from(new Set(recommendations)).slice(0, 4),
     questionResults,
   };
 }
@@ -788,11 +944,24 @@ export function evaluateFullExamAttempt(
   durationSeconds: number,
   repeatAudioUrls: Record<string, string> = {},
   interviewAudioUrls: Record<string, string> = {},
+  examVariant: 'A' | 'B' = 'A',
+  geminiSpeakingEvals: Record<string, GeminiSpeakingEvaluation> = {},
+  geminiWritingEvals: {
+    email?: GeminiWritingEvaluation;
+    discussion?: GeminiWritingEvaluation;
+  } = {},
 ): TestAttempt {
   // 1. Evaluate all 4 sections independently
   const evalReading = evaluateAttempt(readingTest, cwInputs, mcqAnswers, durationSeconds);
   const evalListening = evaluateListeningAttempt(listeningTest, listeningAnswers, durationSeconds);
-  const evalWriting = evaluateWritingAttempt(writingTest, sentenceAnswers, emailText, discussionText, durationSeconds);
+  const evalWriting = evaluateWritingAttempt(
+    writingTest,
+    sentenceAnswers,
+    emailText,
+    discussionText,
+    durationSeconds,
+    geminiWritingEvals,
+  );
   const evalSpeaking = evaluateSpeakingAttempt(
     speakingTest,
     repeatTranscripts,
@@ -800,6 +969,7 @@ export function evaluateFullExamAttempt(
     durationSeconds,
     repeatAudioUrls,
     interviewAudioUrls,
+    geminiSpeakingEvals,
   );
 
   const readingScaled = evalReading.scaledScore; // 0 - 30
@@ -807,6 +977,12 @@ export function evaluateFullExamAttempt(
   const writingScaled = evalWriting.scaledScore; // 0 - 30
   const speakingScaled = evalSpeaking.scaledScore; // 0 - 30
   const totalScaled = readingScaled + listeningScaled + writingScaled + speakingScaled; // 0 - 120
+
+  const rBand = scaled30ToEtsBand2026(readingScaled);
+  const lBand = scaled30ToEtsBand2026(listeningScaled);
+  const wBand = scaled30ToEtsBand2026(writingScaled);
+  const sBand = scaled30ToEtsBand2026(speakingScaled);
+  const totalBand = total120ToEtsBand2026(rBand, lBand, wBand, sBand);
 
   const rawScore =
     evalReading.rawScore +
@@ -862,39 +1038,63 @@ export function evaluateFullExamAttempt(
   };
 
   // Compile strengths, weaknesses, recommendations across all 4 sections
-  const strengths = [
-    ...evalReading.strengths,
-    ...evalListening.strengths,
-    ...evalWriting.strengths,
-    ...evalSpeaking.strengths,
-  ];
+  const strengths = Array.from(
+    new Set([
+      ...evalReading.strengths,
+      ...evalListening.strengths,
+      ...evalWriting.strengths,
+      ...evalSpeaking.strengths,
+    ]),
+  );
 
-  const weaknesses = [
-    ...evalReading.weaknesses,
-    ...evalListening.weaknesses,
-    ...evalWriting.weaknesses,
-    ...evalSpeaking.weaknesses,
-  ];
+  const weaknesses = Array.from(
+    new Set([
+      ...evalReading.weaknesses,
+      ...evalListening.weaknesses,
+      ...evalWriting.weaknesses,
+      ...evalSpeaking.weaknesses,
+    ]),
+  );
 
-  const recommendations = [
-    ...evalReading.recommendations,
-    ...evalListening.recommendations,
-    ...evalWriting.recommendations,
-    ...evalSpeaking.recommendations,
-  ];
+  const recommendations = Array.from(
+    new Set([
+      ...evalReading.recommendations,
+      ...evalListening.recommendations,
+      ...evalWriting.recommendations,
+      ...evalSpeaking.recommendations,
+    ]),
+  );
 
   return {
     id: `full_exam_attempt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    testId: 'toefl_ibt_full_simulation_1',
-    testTitle: 'Simulacro Oficial Completo TOEFL iBT® (Reading, Listening, Writing & Speaking)',
+    testId:
+      examVariant === 'B'
+        ? 'toefl_ibt_full_simulation_b'
+        : 'toefl_ibt_full_simulation_a',
+    testTitle:
+      examVariant === 'B'
+        ? 'Opción B: Prueba Nueva Completa TOEFL iBT® (Reading, Listening, Writing & Speaking)'
+        : 'Opción A: Prueba del TOEFL Completa (Reading, Listening, Writing & Speaking)',
     timestamp: Date.now(),
     durationSeconds,
     rawScore,
     maxScore,
-    scaledScore: totalScaled, // 0 - 120
+    scaledScore: totalScaled, // 0 - 120 orientative equivalence
     percentage,
     cefrLevel: level,
     proficiencyDescriptor: descriptor,
+    etsBandScore2026: totalBand,
+    etsBandBreakdown2026: {
+      reading: rBand,
+      listening: lBand,
+      writing: wBand,
+      speaking: sBand,
+      total: totalBand,
+    },
+    aiDetailedEvaluations: {
+      speaking: geminiSpeakingEvals,
+      writing: geminiWritingEvals,
+    },
     testType: 'full',
     breakdown: {
       ...evalReading.breakdown,
@@ -910,9 +1110,9 @@ export function evaluateFullExamAttempt(
       },
     },
     skillBreakdown,
-    strengths: strengths.slice(0, 4),
-    weaknesses: weaknesses.slice(0, 4),
-    recommendations: recommendations.slice(0, 5),
+    strengths: strengths.slice(0, 5),
+    weaknesses: weaknesses.slice(0, 5),
+    recommendations: recommendations.slice(0, 6),
     questionResults,
   };
 }
